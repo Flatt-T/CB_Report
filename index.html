@@ -10,107 +10,116 @@
       --br:14px;
     }
     *{box-sizing:border-box}
-    body{margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; background:linear-gradient(180deg,#0b0f14,#0a0e13 35%,#0b0f14); color:var(--text); min-height:100vh; display:flex; flex-direction:column}
-    .wrap{max-width:1100px; margin:24px auto 0; padding:0 20px; width:100%}
-    header{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px}
+    body{margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; background:linear-gradient(180deg,#0b0f14,#0a0e13 35%,#0b0f14); color:var(--text)}
+    .wrap{max-width:1100px; margin:40px auto; padding:0 20px}
+
+    header{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px}
     h1{font-size:clamp(20px,3vw,28px); margin:0}
     .card{background:rgba(18,24,32,.8); border:1px solid rgba(125,211,252,.12); border-radius:var(--br); padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
+
     .grid{display:grid; gap:14px}
-    .grid.cols-2{grid-template-columns:1fr}
-    @media(min-width:960px){ .grid.cols-2{grid-template-columns:1fr 1fr} }
+    .grid.cols-3{grid-template-columns:1fr}
+    @media(min-width:980px){ .grid.cols-3{grid-template-columns:1.1fr 1fr 1fr} }
+
     label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px}
     input, select, button, .chips{width:100%}
     input, select{background:#0f141b; color:var(--text); border:1px solid rgba(255,255,255,.08); padding:10px 12px; border-radius:10px; outline:none}
     input::placeholder{color:#5e6b79}
     .row{display:grid; gap:12px; grid-template-columns:1fr}
     @media(min-width:640px){ .row{grid-template-columns:1fr 1fr} }
+
     .tiny{font-size:12px; color:var(--muted)}
+    .hint{color:#9fb0c3; font-size:12px}
+    .inline{display:flex; gap:10px; align-items:center}
     .btnbar{display:flex; flex-wrap:wrap; gap:10px}
     button{background:linear-gradient(180deg, rgba(125,211,252,.14), rgba(167,139,250,.14)); border:1px solid rgba(255,255,255,.12); color:var(--text); padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600}
     button.secondary{background:transparent}
-    button:disabled{opacity:.5; cursor:not-allowed}
+    button:disabled{opacity:.55; cursor:not-allowed}
+
     .tag{display:inline-flex; align-items:center; gap:8px; background:#0f141b; border:1px dashed rgba(255,255,255,.12); padding:6px 10px; border-radius:999px; font-size:12px}
-    .tag.active{border-style:solid}
     .chips{display:flex; gap:8px; flex-wrap:wrap}
+
     .status{margin-top:12px; font-size:13px}
     .status span{padding:4px 8px; border-radius:999px}
     .ok{background:rgba(52,211,153,.12); color:var(--good)}
     .warn{background:rgba(245,158,11,.12); color:var(--warn)}
     .err{background:rgba(239,68,68,.12); color:var(--bad)}
+
     .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; background:#0d1218; border:1px solid rgba(255,255,255,.08); padding:2px 6px; border-radius:6px}
     .divider{height:1px; background:linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent); margin:14px 0}
-    .hint{color:#9fb0c3; font-size:12px}
-    /* Bottom output bar */
-    .bottom-bar{
-      position:sticky; bottom:0; left:0; right:0; margin-top:16px;
-      background:rgba(10,15,21,.9); backdrop-filter: blur(6px);
-      border-top:1px solid rgba(125,211,252,.15);
-    }
-    .bottom-inner{max-width:1100px; margin:0 auto; padding:10px 20px}
-    #log{white-space:pre-wrap; max-height:160px; overflow:auto; font-size:12px; color:#b8c7d6}
+
+    /* Bottom Output Panel */
+    footer#outputBar{position:sticky; bottom:0; margin-top:16px}
+    #logPanel{max-height:240px; overflow:auto}
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
       <h1>🧭 Conference Buddy – Reports</h1>
-      <div class="hint" style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="inline hint">
         <span class="kbd">GET /api/conferences</span>
         <span class="kbd">GET /api/vendors</span>
         <span class="kbd">GET /api/reports/*</span>
       </div>
     </header>
 
-    <div class="grid cols-2">
-      <!-- Controls -->
-      <section class="card">
-        <h2 style="margin-top:0">Configuration</h2>
-        <div class="row">
-          <div>
-            <label for="baseUrl">API Base URL</label>
-            <input id="baseUrl" type="url" placeholder="https://example.com/api" />
-            <div class="tiny">Default: <span class="kbd">https://conference-buddy-geoutils.replit.app/api</span></div>
-          </div>
-          <div>
-            <label for="apiKey">API Key</label>
-            <input id="apiKey" type="password" placeholder="••••••••" />
-            <div class="tiny">Stored only in-memory.</div>
-          </div>
+    <!-- Configuration -->
+    <section class="card" aria-labelledby="cfg">
+      <h2 id="cfg" style="margin-top:0">Configuration</h2>
+      <div class="row">
+        <div>
+          <label for="baseUrl">API Base URL</label>
+          <input id="baseUrl" type="url" placeholder="https://example.com/api" />
+          <div class="tiny">Default: <span class="kbd">https://conference-buddy-geoutils.replit.app/api</span></div>
         </div>
-        <div class="divider"></div>
+        <div>
+          <label for="apiKey">API Key</label>
+          <input id="apiKey" type="password" placeholder="••••••••" />
+          <div class="tiny">Stored only in-memory.</div>
+        </div>
+      </div>
 
-        <h3 style="margin:8px 0 6px">Scope</h3>
-        <div class="row">
-          <div>
-            <label for="conferenceSelect">Conference</label>
-            <select id="conferenceSelect"></select>
-            <div class="tiny">From <span class="kbd">/api/conferences</span>.</div>
-          </div>
-          <div>
-            <label for="vendorSelect">Vendor (optional)</label>
-            <select id="vendorSelect"><option value="">— All vendors —</option></select>
-            <div class="tiny">Filtered via <span class="kbd">/api/vendors?conference_id=...</span>.</div>
-          </div>
-        </div>
-        <div class="row">
-          <div>
-            <label for="sessionSelect">Session (optional)</label>
-            <select id="sessionSelect"><option value="">— All sessions —</option></select>
-            <div class="tiny">Loaded from <span class="kbd">/api/reports/vendor/:id?include=interaction_history</span>. :contentReference[oaicite:4]{index=4}</div>
-          </div>
-          <div>
-            <label for="vendorFilter">Vendor Filter</label>
-            <select id="vendorFilter">
-              <option value="all">all</option>
-              <option value="visited">visited</option>
-              <option value="unvisited">unvisited</option>
-              <option value="high_priority">high_priority</option>
-            </select>
-          </div>
-        </div>
+      <div class="divider"></div>
 
-        <div class="divider"></div>
-        <h3 style="margin:8px 0 6px">Conference Report Options</h3>
+      <h3 style="margin:8px 0 6px">Scope</h3>
+      <div class="row">
+        <div>
+          <label for="conferenceSelect">Conference</label>
+          <select id="conferenceSelect"></select>
+          <div class="tiny">From <span class="kbd">/api/conferences</span>.</div>
+        </div>
+        <div>
+          <label for="vendorSelect">Vendor (multi-select optional)</label>
+          <select id="vendorSelect" multiple size="5">
+            <option value="">— All vendors —</option>
+          </select>
+          <div class="tiny">Filter by conference via <span class="kbd">/api/vendors?conference_id=...</span>. Hold <b>Ctrl/⌘</b> to select multiple.</div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="sessionSelect">Session (optional)</label>
+          <select id="sessionSelect"><option value="">— All sessions —</option></select>
+          <div class="tiny">Loaded from vendor report <span class="kbd">/api/reports/vendor/:id?include=interaction_history</span> when you pick a vendor.</div>
+        </div>
+        <div>
+          <label for="vendorFilter">Vendor Filter</label>
+          <select id="vendorFilter">
+            <option value="all">all</option>
+            <option value="visited">visited</option>
+            <option value="unvisited">unvisited</option>
+            <option value="high_priority">high_priority</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- Report Options -->
+    <section class="grid cols-3">
+      <!-- Conference Report -->
+      <section class="card" aria-labelledby="confrep">
+        <h2 id="confrep" style="margin-top:0">Conference Report</h2>
         <div class="row">
           <div>
             <label>Format</label>
@@ -122,6 +131,20 @@
             </select>
           </div>
           <div>
+            <label>Detail Level (template)</label>
+            <select id="template">
+              <option value="">(default)</option>
+              <option value="executive">executive</option>
+              <option value="detailed">detailed</option>
+              <option value="summary">summary</option>
+              <option value="vendor_focused">vendor_focused</option>
+              <option value="analytics_heavy">analytics_heavy</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
             <label>Date Range</label>
             <select id="dateRange">
               <option value="all">all</option>
@@ -131,7 +154,14 @@
               <option value="custom">custom</option>
             </select>
           </div>
+          <div class="inline" style="gap:8px; align-items:end">
+            <div style="flex:1">
+              <label for="includeAttachments">Include attachments in ZIP</label>
+              <input id="includeAttachments" type="checkbox" />
+            </div>
+          </div>
         </div>
+
         <div class="row" id="customDates" style="display:none">
           <div><label>Start</label><input type="date" id="customStart"></div>
           <div><label>End</label><input type="date" id="customEnd"></div>
@@ -140,74 +170,134 @@
         <div style="margin-top:8px">
           <label>Include Sections</label>
           <div class="chips" id="sections">
-            <button class="tag active" data-section="overview" type="button">overview</button>
-            <button class="tag active" data-section="vendors" type="button">vendors</button>
-            <button class="tag active" data-section="sessions" type="button">sessions</button>
-            <button class="tag active" data-section="analytics" type="button">analytics</button>
-            <button class="tag active" data-section="recommendations" type="button">recommendations</button>
+            <button class="tag" data-section="overview" type="button">overview</button>
+            <button class="tag" data-section="vendors" type="button">vendors</button>
+            <button class="tag" data-section="sessions" type="button">sessions</button>
+            <button class="tag" data-section="analytics" type="button">analytics</button>
+            <button class="tag" data-section="recommendations" type="button">recommendations</button>
           </div>
-          <div class="tiny">Maps to <span class="kbd">include_sections[]</span> for <span class="kbd">/api/reports/conference/:id</span>. :contentReference[oaicite:5]{index=5}</div>
+          <div class="tiny">Sent as <span class="kbd">include_sections[]</span> to <span class="kbd">/api/reports/conference/:id</span>.</div>
         </div>
 
-        <div class="row" style="margin-top:8px">
-          <div class="inline" style="display:flex;gap:10px;align-items:center">
-            <input id="includeAttachments" type="checkbox" />
-            <label for="includeAttachments" style="margin:0">Include attachments in ZIP</label>
+        <div class="divider"></div>
+        <div class="btnbar">
+          <button id="btnConfReport">Generate Conference Report</button>
+        </div>
+      </section>
+
+      <!-- End of Day Report -->
+      <section class="card" aria-labelledby="eodrep">
+        <h2 id="eodrep" style="margin-top:0">End-of-Day Report</h2>
+        <div class="row">
+          <div>
+            <label>Day</label>
+            <input type="date" id="eodDate">
           </div>
           <div>
-            <label>Template</label>
-            <select id="template">
-              <option value="">(default)</option>
+            <label>Format</label>
+            <select id="eodFormat">
+              <option value="html">html</option>
+              <option value="pdf">pdf</option>
+              <option value="json">json</option>
+              <option value="zip">zip</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Detail Level (template)</label>
+            <select id="eodTemplate">
               <option value="executive">executive</option>
-              <option value="detailed">detailed</option>
               <option value="summary">summary</option>
+              <option value="detailed">detailed</option>
               <option value="vendor_focused">vendor_focused</option>
               <option value="analytics_heavy">analytics_heavy</option>
             </select>
-            <div class="tiny">Templates per KB. :contentReference[oaicite:6]{index=6}</div>
+          </div>
+          <div>
+            <label>Vendor Filter</label>
+            <select id="eodVendorFilter">
+              <option value="all">all</option>
+              <option value="visited">visited</option>
+              <option value="unvisited">unvisited</option>
+              <option value="high_priority">high_priority</option>
+            </select>
+          </div>
+        </div>
+        <div class="tiny">Uses conference report with <span class="kbd">date_range=custom</span> and the selected day for both <span class="kbd">custom_start</span> and <span class="kbd">custom_end</span>.</div>
+        <div class="divider"></div>
+        <div class="btnbar">
+          <button id="btnEodReport">Generate End-of-Day Report</button>
+        </div>
+      </section>
+
+      <!-- Session / Vendor(s) -->
+      <section class="card" aria-labelledby="svrep">
+        <h2 id="svrep" style="margin-top:0">Session / Vendor(s)</h2>
+
+        <div class="row">
+          <div>
+            <label>Session Report (JSON)</label>
+            <select id="sessionForReport"><option value="">— choose from Sessions dropdown above —</option></select>
+            <div class="tiny">We use <span class="kbd">/api/sessions/:id</span>. Pick a vendor above first to load sessions.</div>
+          </div>
+          <div>
+            <label>Session Detail Level</label>
+            <select id="sessionDetail">
+              <option value="detailed">detailed</option>
+              <option value="summary">summary</option>
+            </select>
           </div>
         </div>
 
         <div class="divider"></div>
-        <h3 style="margin:8px 0 6px">Generate</h3>
+
+        <div class="row">
+          <div>
+            <label>Vendor(s) Report (JSON)</label>
+            <div class="tiny">Select one or more vendors above — or none for **all** vendors in the conference.</div>
+          </div>
+          <div>
+            <label>Vendor Detail Level</label>
+            <select id="vendorsDetail">
+              <option value="detailed">detailed</option>
+              <option value="summary">summary</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="divider"></div>
         <div class="btnbar">
-          <!-- Conference report quick buttons for each format -->
-          <button id="btnConfHTML">Conference Report (HTML)</button>
-          <button id="btnConfPDF">Conference Report (PDF)</button>
-          <button id="btnConfJSON">Conference Report (JSON)</button>
-          <button id="btnConfZIP">Conference Report (ZIP)</button>
-          <!-- Vendor report -->
-          <button id="btnVendorReport" class="secondary">Vendor Report (JSON)</button>
+          <button id="btnSessionReport" class="secondary">Generate Session Report</button>
+          <button id="btnVendorsReport" class="secondary">Generate Vendor(s) Report</button>
         </div>
+      </section>
+    </section>
+
+    <!-- Bottom Output -->
+    <footer id="outputBar">
+      <aside class="card" aria-live="polite" id="logPanel">
+        <h2 style="margin-top:0">Output</h2>
+        <div id="log" class="tiny" style="white-space:pre-wrap;"></div>
         <div class="status" id="status"></div>
-      </section>
-
-      <!-- Secondary card: live counts / tips (optional) -->
-      <section class="card">
-        <h2 style="margin-top:0">Tips</h2>
-        <div class="tiny">
-          Use the bottom Output panel to see the exact URLs the page calls—handy for debugging CORS, params, and auth.
-        </div>
-      </section>
-    </div>
+      </aside>
+    </footer>
   </div>
 
-  <!-- Bottom output bar -->
-  <div class="bottom-bar">
-    <div class="bottom-inner">
-      <strong>Output</strong>
-      <div id="log"></div>
-    </div>
-  </div>
+  <span class="sr" aria-live="polite" id="live"></span>
 
   <script>
-    // --- Helpers ---
-    const $ = sel => document.querySelector(sel);
+    // ---------- Helpers ----------
+    const $  = sel => document.querySelector(sel);
     const $$ = sel => Array.from(document.querySelectorAll(sel));
-    const log = (...args) => { const msg = args.map(a => (typeof a==='string'? a : JSON.stringify(a,null,2))).join(' '); const el=$("#log"); el.textContent += (msg + "\\n"); el.scrollTop = el.scrollHeight; };
+    const live = (text) => { $("#live").textContent = text; };
+    const log = (...args) => {
+      const msg = args.map(a => (typeof a==='string'? a : JSON.stringify(a,null,2))).join(' ');
+      const el=$("#log"); el.textContent += (msg + "\\n"); el.scrollTop = el.scrollHeight; live(msg);
+    };
     const setStatus = (text, type="ok") => { $("#status").innerHTML = text ? `<span class="${type}">${text}</span>` : ""; };
 
-    // Array-friendly query serializer with [] for arrays
+    // Array-friendly query serializer with [] for arrays (e.g., include_sections[]=x)
     const qs = (obj) => {
       const parts = [];
       for (const [k,v] of Object.entries(obj)) {
@@ -223,14 +313,22 @@
       setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
     };
 
-    // Defaults (per task)
+    // Disable buttons during async action
+    async function withButtonsDisabled(fn){
+      const btns = $$("button"); btns.forEach(b=>b.disabled=true);
+      try { return await fn(); }
+      finally { btns.forEach(b=>b.disabled=false); }
+    }
+
+    // Defaults
     const DEFAULT_BASE = "https://conference-buddy-geoutils.replit.app/api";
     const DEFAULT_KEY  = "5UtGAI40f0vUXWqSdr547POSAWJ6u2g6CdldegSg";
 
+    // State
     let apiBase = DEFAULT_BASE;
     let apiKey  = DEFAULT_KEY;
 
-    // Init inputs
+    // UI init
     $("#baseUrl").value = DEFAULT_BASE;
     $("#apiKey").value = DEFAULT_KEY;
 
@@ -238,10 +336,11 @@
       $("#customDates").style.display = e.target.value === 'custom' ? '' : 'none';
     });
 
-    // Toggle section chips
+    // Toggle include sections chips
     $("#sections").addEventListener('click', (e) => {
       const btn = e.target.closest('button.tag'); if(!btn) return;
       btn.classList.toggle('active');
+      btn.style.borderStyle = btn.classList.contains('active') ? 'solid' : 'dashed';
     });
 
     $("#baseUrl").addEventListener('input', e => apiBase = e.target.value.trim() || DEFAULT_BASE);
@@ -254,7 +353,7 @@
         'Accept': 'application/json, text/html, application/pdf, application/zip;q=0.9,*/*;q=0.8',
         ...(opts.headers||{})
       };
-      const res = await fetch(url, { ...opts, headers, mode: 'cors' });
+      const res = await fetch(url, { ...opts, headers, mode: 'cors', redirect: 'follow' });
       const contentType = res.headers.get('content-type') || '';
       if(!res.ok){
         let details = '';
@@ -264,7 +363,7 @@
       return { res, contentType, url };
     }
 
-    // Load conferences
+    // ---------- Loaders ----------
     async function loadConferences(){
       setStatus("Loading conferences…","warn");
       try{
@@ -273,7 +372,7 @@
         const data = contentType.includes('json') ? await res.json() : null;
         const items = (data && (data.data||data.items||[])) || [];
         const sel = $("#conferenceSelect");
-        sel.innerHTML = items.map(c => `<option value="${c.id}">${c.name} ${c.status?`(${c.status})`:''}</option>`).join('');
+        sel.innerHTML = items.map(c => `<option value="${c.id}">${c.name} (${c.status || ''})</option>`).join('');
         setStatus(`Loaded ${items.length} conferences.`,"ok");
         if(items.length){ await loadVendors(items[0].id); }
       }catch(e){
@@ -281,10 +380,12 @@
       }
     }
 
-    // Load vendors by conference
-    async function loadVendors(conferenceId){
-      $("#vendorSelect").innerHTML = `<option value="">— All vendors —</option>`;
+    async function loadVendors(conferenceId, {keepSelection=false}={}){
+      const vendorSel = $("#vendorSelect");
+      const prev = new Set($$("#vendorSelect option:checked").map(o=>o.value));
+      vendorSel.innerHTML = `<option value="">— All vendors —</option>`;
       $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
+      $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
       if(!conferenceId) return;
       setStatus("Loading vendors…","warn");
       try{
@@ -293,17 +394,20 @@
         log('GET', url);
         const data = contentType.includes('json') ? await res.json() : null;
         const items = (data && (data.data||[])) || [];
-        $("#vendorSelect").innerHTML = `<option value="">— All vendors —</option>` +
+        vendorSel.innerHTML = `<option value="">— All vendors —</option>` +
           items.map(v => `<option value="${v.id}">${v.name}${v.booth_number?` · Booth ${v.booth_number}`:''}</option>`).join('');
+        if(keepSelection) { // re-apply previous selection if possible
+          $$("#vendorSelect option").forEach(opt => { if(prev.has(opt.value)) opt.selected = true; });
+        }
         setStatus(`Loaded ${items.length} vendors.`,"ok");
       }catch(e){
         console.error(e); setStatus(`Failed to load vendors: ${e.message}`,"err"); log(e.message);
       }
     }
 
-    // Load sessions from vendor interaction history
     async function loadSessionsFromVendor(vendorId){
       $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
+      $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
       if(!vendorId) return;
       setStatus("Loading sessions from vendor history…","warn");
       try{
@@ -319,35 +423,36 @@
           return `<option value="${sid}">${label}</option>`;
         }).join('');
         $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>` + options;
+        $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>` + options;
         setStatus(`Loaded ${history.length} sessions from vendor history.`,"ok");
       }catch(e){
         console.error(e); setStatus(`Failed to load sessions: ${e.message}`,"err"); log(e.message);
       }
     }
 
+    // ---------- Events ----------
     $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
     $("#vendorSelect").addEventListener('change', e => {
-      const vid = e.target.value;
-      if(vid){ loadSessionsFromVendor(vid); }
-      else { $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`; }
+      const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+      if(selected.length === 1){ loadSessionsFromVendor(selected[0]); }
+      else { $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`; $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`; }
     });
 
-    // Build conference report query object from UI
-    function buildConfQuery(formatOverride){
-      const format = formatOverride || $("#format").value;
+    // ---------- Report Generators ----------
+    async function generateConferenceReport({dateMode='range'}={}){
+      const confId = $("#conferenceSelect").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
+
+      const format = $("#format").value;
       const dateRange = $("#dateRange").value;
       const customStart = $("#customStart").value;
       const customEnd   = $("#customEnd").value;
       const vendorFilter = $("#vendorFilter").value || 'all';
       const includeAttachments = $("#includeAttachments").checked;
       const template = $("#template").value || undefined;
-      const sections = $$("#sections .tag.active").map(b => b.dataset.section);
 
-      const queryObj = {
-        format,
-        vendor_filter: vendorFilter,
-        date_range: dateRange
-      };
+      const sections = $$("#sections .tag.active").map(b => b.dataset.section);
+      const queryObj = { format, vendor_filter: vendorFilter, date_range: dateRange };
       if (template) queryObj.template = template;
       if (sections.length) queryObj['include_sections'] = sections;
       if (includeAttachments) queryObj['include_attachments'] = true;
@@ -355,75 +460,184 @@
         if (customStart) queryObj['custom_start'] = customStart;
         if (customEnd)   queryObj['custom_end']   = customEnd;
       }
-      return queryObj;
-    }
 
-    async function runConferenceReport(format){
-      const confId = $("#conferenceSelect").value;
-      if(!confId){ setStatus("Select a conference first.","err"); return; }
-      const queryString = qs(buildConfQuery(format));
-      setStatus(`Generating conference report (${format.toUpperCase()})…`,"warn");
+      const queryString = qs(queryObj);
+      setStatus("Generating conference report…","warn");
       try{
         const {res, contentType, url} = await apiFetch(`/reports/conference/${confId}?${queryString}`);
         log('GET', url);
-        if((contentType||'').includes('application/json')){
-          const json = await res.json();
-          log(JSON.stringify(json,null,2));
-          if(json.s3_url){
-            const fname = json.filename || `conference_report.${format || 'json'}`;
-            const s3 = await fetch(json.s3_url);
-            if(!s3.ok) throw new Error(`S3 download failed: ${s3.status} ${await s3.text().catch(()=>s3.statusText)}`);
-            const blob = await s3.blob();
-            fileDownload(blob, fname);
-            setStatus(`Report ready → downloaded ${fname}`,"ok");
-          }else{
-            const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
-            const fname = json.filename || 'conference_report.json';
-            fileDownload(blob, fname);
-            setStatus(`Report ready → downloaded ${fname}`,"ok");
-          }
-        } else {
-          const blob = await res.blob();
-          const fallbackExt = contentType.includes('pdf')?'pdf':(contentType.includes('zip')?'zip':(contentType.includes('html')?'html':format||'dat'));
-          const fname = `conference_report.${fallbackExt}`;
-          fileDownload(blob, fname);
-          setStatus(`Report ready → downloaded ${fname}`,"ok");
-        }
+        await handleReportDownload(res, contentType, `conference_report`);
+        setStatus(`Report ready.`,"ok");
       }catch(e){
         console.error(e);
-        setStatus(`Conference report failed: ${e.message}`,"err");
-        log(e.message);
+        setStatus(`Conference report failed: ${e.message}`,"err"); log(e.message);
       }
     }
 
-    // Vendor report (JSON per KB)
-    async function runVendorReport(){
-      const vendorId = $("#vendorSelect").value;
-      if(!vendorId){ setStatus("Select a vendor first (Vendor Report requires vendor).","err"); return; }
-      setStatus("Generating vendor report…","warn");
+    async function generateEndOfDayReport(){
+      const confId = $("#conferenceSelect").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
+      const day = $("#eodDate").value;
+      if(!day){ setStatus("Pick a day for the End-of-Day report.","err"); return; }
+
+      const format = $("#eodFormat").value;
+      const vendorFilter = $("#eodVendorFilter").value || 'all';
+      const template = $("#eodTemplate").value || undefined;
+
+      const sections = ['overview','vendors','sessions','analytics','recommendations'];
+      const queryObj = {
+        format,
+        vendor_filter: vendorFilter,
+        date_range: 'custom',
+        custom_start: day,
+        custom_end: day,
+        include_sections: sections
+      };
+      if(template) queryObj.template = template;
+
+      const qsStr = qs(queryObj);
+      setStatus("Generating End-of-Day report…","warn");
       try{
-        const {res, contentType, url} = await apiFetch(`/reports/vendor/${vendorId}`);
+        const {res, contentType, url} = await apiFetch(`/reports/conference/${confId}?${qsStr}`);
+        log('GET', url);
+        await handleReportDownload(res, contentType, `eod_report_${day}`);
+        setStatus(`End-of-Day report ready.`,"ok");
+      }catch(e){
+        console.error(e);
+        setStatus(`End-of-Day report failed: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    async function generateSessionReport(){
+      const sid = $("#sessionForReport").value || $("#sessionSelect").value;
+      if(!sid){ setStatus("Pick a session (select a vendor first to load sessions).","err"); return; }
+      const level = $("#sessionDetail").value || 'detailed';
+
+      setStatus("Generating session report (JSON)…","warn");
+      try{
+        const {res, contentType, url} = await apiFetch(`/sessions/${sid}`);
         log('GET', url);
         const json = contentType.includes('json') ? await res.json() : { raw: await res.text() };
-        const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
-        const fname = (json && json.filename) ? json.filename : `vendor_report_${vendorId}.json`;
-        fileDownload(blob, fname);
-        setStatus(`Report ready → downloaded ${fname}`,"ok");
+        const out = (level === 'summary') ? summarizeSession(json) : json;
+        const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
+        fileDownload(blob, `session_${sid}_${level}.json`);
+        setStatus(`Session report ready.`,"ok");
       }catch(e){
-        console.error(e);
-        setStatus(`Vendor report failed: ${e.message}`,"err");
-        log(e.message);
+        console.error(e); setStatus(`Session report failed: ${e.message}`,"err"); log(e.message);
       }
     }
 
-    // Wire buttons
-    $("#btnConfHTML").addEventListener('click', () => runConferenceReport('html'));
-    $("#btnConfPDF").addEventListener('click', () => runConferenceReport('pdf'));
-    $("#btnConfJSON").addEventListener('click', () => runConferenceReport('json'));
-    $("#btnConfZIP").addEventListener('click', () => runConferenceReport('zip'));
-    $("#btnVendorReport").addEventListener('click', runVendorReport);
+    async function generateVendorsReport(){
+      const confId = $("#conferenceSelect").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
 
-    // Kickoff
+      const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
+      const level = $("#vendorsDetail").value || 'detailed';
+      setStatus("Generating vendor(s) report…","warn");
+
+      await withButtonsDisabled(async () => {
+        try{
+          let vendorIds = selected;
+          if(vendorIds.length === 0){
+            // fetch all vendors for conference
+            const q = qs({ conference_id: confId, limit: 100, offset: 0 });
+            const {res, contentType, url} = await apiFetch(`/vendors?${q}`);
+            log('GET', url);
+            const data = contentType.includes('json') ? await res.json() : null;
+            vendorIds = ((data && data.data) || []).map(v => v.id);
+          }
+
+          const results = [];
+          for(const id of vendorIds){
+            const {res, contentType, url} = await apiFetch(`/reports/vendor/${id}`);
+            log('GET', url);
+            const json = contentType.includes('json') ? await res.json() : { raw: await res.text() };
+            results.push(level==='summary' ? summarizeVendor(json) : json);
+          }
+
+          const out = { generated_at: new Date().toISOString(), conference_id: confId, count: results.length, vendors: results };
+          const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
+          fileDownload(blob, `vendors_report_${confId}_${level}.json`);
+          setStatus(`Vendor(s) report ready (${results.length}).`,"ok");
+        }catch(e){
+          console.error(e); setStatus(`Vendor(s) report failed: ${e.message}`,"err"); log(e.message);
+        }
+      });
+    }
+
+    // ---------- Download handler ----------
+    async function handleReportDownload(res, contentType, baseName){
+      if((contentType||'').includes('application/json')){
+        const json = await res.json();
+        log(JSON.stringify(json,null,2));
+        if(json.s3_url){
+          const fname = json.filename || `${baseName}.json`;
+          const s3 = await fetch(json.s3_url);
+          if(!s3.ok) throw new Error(`S3 download failed: ${s3.status} ${await s3.text().catch(()=>s3.statusText)}`);
+          const blob = await s3.blob();
+          fileDownload(blob, fname);
+        }else{
+          const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
+          const fname = json.filename || `${baseName}.json`;
+          fileDownload(blob, fname);
+        }
+      } else {
+        const blob = await res.blob();
+        const ext = contentType.includes('pdf')?'pdf':(contentType.includes('zip')?'zip':(contentType.includes('html')?'html':'dat'));
+        const fname = `${baseName}.${ext}`;
+        fileDownload(blob, fname);
+      }
+    }
+
+    // ---------- Summarizers (client-side “detail” for JSON-only reports) ----------
+    function summarizeVendor(payload){
+      try{
+        const v = payload?.data?.vendor || {};
+        const hist = payload?.data?.interaction_history || [];
+        return {
+          vendor: {
+            id: v.id, name: v.name, booth_number: v.booth_number,
+            priority_score: v.relationship_status?.priority_score ?? v.priority_score,
+            is_visited: v.relationship_status?.is_visited ?? v.is_visited,
+            last_interaction: v.relationship_status?.last_interaction ?? v.last_interaction
+          },
+          interaction_summary: hist.slice(0,10).map(h => ({
+            session_id: h.session_id || h.id,
+            date: h.date,
+            duration_minutes: h.duration_minutes,
+            type: h.type,
+            summary: h.summary,
+            sentiment: h.sentiment,
+            action_items: h.action_items
+          }))
+        };
+      }catch{ return payload; }
+    }
+
+    function summarizeSession(payload){
+      try{
+        const d = payload?.data || payload;
+        return {
+          id: d.id || d.session_id,
+          vendor_name: d.vendor_name,
+          conference_name: d.conference_name,
+          start_time: d.start_time, end_time: d.end_time,
+          summary: d.summary,
+          key_topics: d.key_topics,
+          sentiment: d.sentiment,
+          action_items: d.action_items,
+          user_rating: d.user_rating
+        };
+      }catch{ return payload; }
+    }
+
+    // ---------- Wire buttons ----------
+    $("#btnConfReport").addEventListener('click', () => withButtonsDisabled(() => generateConferenceReport()));
+    $("#btnEodReport").addEventListener('click', () => withButtonsDisabled(() => generateEndOfDayReport()));
+    $("#btnSessionReport").addEventListener('click', () => withButtonsDisabled(() => generateSessionReport()));
+    $("#btnVendorsReport").addEventListener('click', () => withButtonsDisabled(() => generateVendorsReport()));
+
+    // ---------- Kickoff ----------
     loadConferences();
   </script>
 </body>
