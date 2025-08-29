@@ -5,42 +5,23 @@
   <title>Conference Buddy – Reports (PoC)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root{
-      --bg:#0b0f14; --panel:#121820; --muted:#7b8a9a; --text:#e6eef6; --accent:#7dd3fc; --accent2:#a78bfa; --good:#34d399; --warn:#f59e0b; --bad:#ef4444;
-      --br:14px;
-    }
-    *{box-sizing:border-box}
-    body{margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; background:linear-gradient(180deg,#0b0f14,#0a0e13 35%,#0b0f14); color:var(--text)}
-    .wrap{max-width:1100px; margin:40px auto; padding:0 20px}
-    header{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px}
-    h1{font-size:clamp(20px,3vw,28px); margin:0}
-    .card{background:rgba(18,24,32,.8); border:1px solid rgba(125,211,252,.12); border-radius:var(--br); padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    .grid{display:grid; gap:14px}
-    .grid.cols-2{grid-template-columns:1fr}
-    @media(min-width:840px){ .grid.cols-2{grid-template-columns:1.2fr .8fr} }
-    label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px}
-    input, select, button, .chips{width:100%}
+    :root{ --bg:#0b0f14; --panel:#121820; --muted:#7b8a9a; --text:#e6eef6; --accent:#7dd3fc; --accent2:#a78bfa; --good:#34d399; --warn:#f59e0b; --bad:#ef4444; --br:14px; }
+    *{box-sizing:border-box} body{margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; background:linear-gradient(180deg,#0b0f14,#0a0e13 35%,#0b0f14); color:var(--text)}
+    .wrap{max-width:1100px; margin:40px auto; padding:0 20px} header{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px}
+    h1{font-size:clamp(20px,3vw,28px); margin:0} .card{background:rgba(18,24,32,.8); border:1px solid rgba(125,211,252,.12); border-radius:var(--br); padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .grid{display:grid; gap:14px} .grid.cols-2{grid-template-columns:1fr} @media(min-width:840px){ .grid.cols-2{grid-template-columns:1.2fr .8fr} }
+    label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px} input, select, button, .chips{width:100%}
     input, select{background:#0f141b; color:var(--text); border:1px solid rgba(255,255,255,.08); padding:10px 12px; border-radius:10px; outline:none}
-    input::placeholder{color:#5e6b79}
-    .row{display:grid; gap:12px; grid-template-columns:1fr}
-    @media(min-width:640px){ .row{grid-template-columns:1fr 1fr} }
-    .tiny{font-size:12px; color:var(--muted)}
-    .btnbar{display:flex; flex-wrap:wrap; gap:10px}
+    input::placeholder{color:#5e6b79} .row{display:grid; gap:12px; grid-template-columns:1fr} @media(min-width:640px){ .row{grid-template-columns:1fr 1fr} }
+    .tiny{font-size:12px; color:var(--muted)} .btnbar{display:flex; flex-wrap:wrap; gap:10px}
     button{background:linear-gradient(180deg, rgba(125,211,252,.14), rgba(167,139,250,.14)); border:1px solid rgba(255,255,255,.12); color:var(--text); padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600}
-    button.secondary{background:transparent}
-    button:disabled{opacity:.5; cursor:not-allowed}
+    button.secondary{background:transparent} button:disabled{opacity:.5; cursor:not-allowed}
     .tag{display:inline-flex; align-items:center; gap:8px; background:#0f141b; border:1px dashed rgba(255,255,255,.12); padding:6px 10px; border-radius:999px; font-size:12px}
-    .chips{display:flex; gap:8px; flex-wrap:wrap}
-    .status{margin-top:12px; font-size:13px}
-    .status span{padding:4px 8px; border-radius:999px}
-    .ok{background:rgba(52,211,153,.12); color:var(--good)}
-    .warn{background:rgba(245,158,11,.12); color:var(--warn)}
-    .err{background:rgba(239,68,68,.12); color:var(--bad)}
+    .chips{display:flex; gap:8px; flex-wrap:wrap} .status{margin-top:12px; font-size:13px} .status span{padding:4px 8px; border-radius:999px}
+    .ok{background:rgba(52,211,153,.12); color:var(--good)} .warn{background:rgba(245,158,11,.12); color:var(--warn)} .err{background:rgba(239,68,68,.12); color:var(--bad)}
     .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; background:#0d1218; border:1px solid rgba(255,255,255,.08); padding:2px 6px; border-radius:6px}
     .divider{height:1px; background:linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent); margin:14px 0}
-    .hint{color:#9fb0c3; font-size:12px}
-    .inline{display:flex; gap:10px; align-items:center}
-    .sr{position:absolute; left:-9999px}
+    .hint{color:#9fb0c3; font-size:12px} .inline{display:flex; gap:10px; align-items:center}
   </style>
 </head>
 <body>
@@ -55,7 +36,6 @@
     </header>
 
     <div class="grid cols-2">
-      <!-- Left: Controls -->
       <section class="card">
         <h2 style="margin-top:0">Configuration</h2>
         <div class="row">
@@ -67,7 +47,7 @@
           <div>
             <label for="apiKey">API Key</label>
             <input id="apiKey" type="password" placeholder="••••••••" />
-            <div class="tiny">Your key is stored only in-memory in this page.</div>
+            <div class="tiny">Stored only in-memory.</div>
           </div>
         </div>
         <div class="divider"></div>
@@ -77,19 +57,19 @@
           <div>
             <label for="conferenceSelect">Conference</label>
             <select id="conferenceSelect"></select>
-            <div class="tiny">Populated from <span class="kbd">/api/conferences</span>.</div>
+            <div class="tiny">From <span class="kbd">/api/conferences</span>.</div>
           </div>
           <div>
             <label for="vendorSelect">Vendor (optional)</label>
             <select id="vendorSelect"><option value="">— All vendors —</option></select>
-            <div class="tiny">Filtered by conference via <span class="kbd">/api/vendors?conference_id=...</span>.</div>
+            <div class="tiny">Filtered via <span class="kbd">/api/vendors?conference_id=...</span>.</div>
           </div>
         </div>
         <div class="row">
           <div>
             <label for="sessionSelect">Session (optional)</label>
             <select id="sessionSelect"><option value="">— All sessions —</option></select>
-            <div class="tiny">Loaded from the selected vendor’s interaction history in <span class="kbd">/api/reports/vendor/:id</span>. :contentReference[oaicite:1]{index=1}</div>
+            <div class="tiny">Loaded from vendor report <span class="kbd">/api/reports/vendor/:id?include=interaction_history</span>. :contentReference[oaicite:2]{index=2}</div>
           </div>
           <div>
             <label for="vendorFilter">Vendor Filter</label>
@@ -139,7 +119,7 @@
             <button class="tag" data-section="analytics" type="button">analytics</button>
             <button class="tag" data-section="recommendations" type="button">recommendations</button>
           </div>
-          <div class="tiny">Maps to <span class="kbd">include_sections[]</span> in <span class="kbd">/api/reports/conference/:id</span>. :contentReference[oaicite:2]{index=2}</div>
+          <div class="tiny">Maps to <span class="kbd">include_sections[]</span> for <span class="kbd">/api/reports/conference/:id</span>. :contentReference[oaicite:3]{index=3}</div>
         </div>
 
         <div class="row" style="margin-top:8px">
@@ -167,7 +147,6 @@
         <div class="status" id="status"></div>
       </section>
 
-      <!-- Right: Log / Preview -->
       <aside class="card" aria-live="polite" id="logPanel">
         <h2 style="margin-top:0">Output</h2>
         <div id="log" class="tiny" style="white-space:pre-wrap; max-height:520px; overflow:auto;"></div>
@@ -179,11 +158,26 @@
     // --- Helpers ---
     const $ = sel => document.querySelector(sel);
     const $$ = sel => Array.from(document.querySelectorAll(sel));
-    const log = (...args) => { const msg = args.map(a => typeof a==='string'? a : JSON.stringify(a,null,2)).join(' '); const el=$("#log"); el.textContent += (msg + "\n"); el.scrollTop = el.scrollHeight; };
+    const log = (...args) => { const msg = args.map(a => (typeof a==='string'? a : JSON.stringify(a,null,2))).join(' '); const el=$("#log"); el.textContent += (msg + "\n"); el.scrollTop = el.scrollHeight; };
     const setStatus = (text, type="ok") => { $("#status").innerHTML = text ? `<span class="${type}">${text}</span>` : ""; };
-    const qs = (obj) => Object.entries(obj).filter(([,v]) => v!==undefined && v!==null && v!=="").map(([k,v]) => Array.isArray(v) ? v.map(x => `${encodeURIComponent(k)}=${encodeURIComponent(x)}`).join('&') : `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+
+    // Array-friendly query serializer with [] for arrays (e.g., include_sections[]=x)
+    const qs = (obj) => {
+      const parts = [];
+      for (const [k,v] of Object.entries(obj)) {
+        if (v===undefined || v===null || v==="") continue;
+        if (Array.isArray(v)) {
+          v.forEach(x => parts.push(`${encodeURIComponent(k)}[]=${encodeURIComponent(x)}`));
+        } else {
+          parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+        }
+      }
+      return parts.join('&');
+    };
+
     const fileDownload = (blob, filename) => {
-      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename||'download'; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename||'download'; document.body.appendChild(a); a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
     };
 
     // Defaults
@@ -198,39 +192,43 @@
     $("#baseUrl").value = DEFAULT_BASE;
     $("#apiKey").value = DEFAULT_KEY;
 
-    // Toggle custom dates
     $("#dateRange").addEventListener('change', e => {
       $("#customDates").style.display = e.target.value === 'custom' ? '' : 'none';
     });
 
-    // Toggle include sections chips (pressed = selected)
+    // Toggle include sections chips
     $("#sections").addEventListener('click', (e) => {
       const btn = e.target.closest('button.tag'); if(!btn) return;
       btn.classList.toggle('active');
       btn.style.borderStyle = btn.classList.contains('active') ? 'solid' : 'dashed';
     });
 
-    // Apply config changes
     $("#baseUrl").addEventListener('input', e => apiBase = e.target.value.trim() || DEFAULT_BASE);
     $("#apiKey").addEventListener('input', e => apiKey  = e.target.value.trim()  || DEFAULT_KEY);
 
     async function apiFetch(path, opts={}){
       const url = path.startsWith('http') ? path : `${apiBase}${path}`;
-      const headers = Object.assign({'X-API-Key': apiKey}, opts.headers||{});
-      const res = await fetch(url, { ...opts, headers });
+      const headers = {
+        'X-API-Key': apiKey,
+        'Accept': 'application/json, text/html, application/pdf, application/zip;q=0.9,*/*;q=0.8',
+        ...(opts.headers||{})
+      };
+      const res = await fetch(url, { ...opts, headers, mode: 'cors' });
       const contentType = res.headers.get('content-type') || '';
       if(!res.ok){
-        const errText = await res.text().catch(()=>res.statusText);
-        throw new Error(`HTTP ${res.status} – ${errText}`);
+        let details = '';
+        try { details = await res.text(); } catch {}
+        throw new Error(`HTTP ${res.status} at ${url} – ${details || res.statusText}`);
       }
-      return { res, contentType };
+      return { res, contentType, url };
     }
 
     // Load conferences
     async function loadConferences(){
       setStatus("Loading conferences…","warn");
       try{
-        const {res, contentType} = await apiFetch('/conferences');
+        const {res, contentType, url} = await apiFetch('/conferences');
+        log('GET', url);
         const data = contentType.includes('json') ? await res.json() : null;
         const items = (data && (data.data||data.items||[])) || [];
         const sel = $("#conferenceSelect");
@@ -249,8 +247,9 @@
       if(!conferenceId) return;
       setStatus("Loading vendors…","warn");
       try{
-        const q = qs({ conference_id: conferenceId, limit: 100 });
-        const {res, contentType} = await apiFetch(`/vendors?${q}`);
+        const query = qs({ conference_id: conferenceId, limit: 100 });
+        const {res, contentType, url} = await apiFetch(`/vendors?${query}`);
+        log('GET', url);
         const data = contentType.includes('json') ? await res.json() : null;
         const items = (data && (data.data||[])) || [];
         $("#vendorSelect").innerHTML = `<option value="">— All vendors —</option>` +
@@ -261,19 +260,22 @@
       }
     }
 
-    // Load sessions (from vendor report interaction history)
+    // Load sessions from vendor report
     async function loadSessionsFromVendor(vendorId){
       $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
       if(!vendorId) return;
       setStatus("Loading sessions from vendor history…","warn");
       try{
-        const {res, contentType} = await apiFetch(`/reports/vendor/${vendorId}`);
+        const {res, contentType, url} = await apiFetch(`/reports/vendor/${vendorId}?include=interaction_history`);
+        log('GET', url);
         const payload = contentType.includes('json') ? await res.json() : null;
-        const history = (payload && payload.data && payload.data.interaction_history) || [];
-        const options = history.map(h => {
-          const dt = h.date ? new Date(h.date).toLocaleString() : '';
-          const label = `${dt} – ${h.summary || h.type || 'session'} (${h.duration_minutes||'?'}m)`;
-          return `<option value="${h.session_id}">${label}</option>`;
+        const history = (payload && payload.data && (payload.data.interaction_history || payload.data.sessions || [])) || [];
+        const options = history.map((h, idx) => {
+          const dt = h.date || h.timestamp || h.start_time;
+          const dtLabel = dt ? new Date(dt).toLocaleString() : `Session ${idx+1}`;
+          const label = `${dtLabel} – ${h.summary || h.type || 'session'}${h.duration_minutes?` (${h.duration_minutes}m)`:''}`;
+          const sid = h.session_id || h.id || `${vendorId}-${idx}`;
+          return `<option value="${sid}">${label}</option>`;
         }).join('');
         $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>` + options;
         setStatus(`Loaded ${history.length} sessions from vendor history.`,"ok");
@@ -282,7 +284,6 @@
       }
     }
 
-    // Event wiring
     $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
     $("#vendorSelect").addEventListener('change', e => {
       const vid = e.target.value;
@@ -300,38 +301,39 @@
       const customStart = $("#customStart").value;
       const customEnd   = $("#customEnd").value;
       const vendorFilter = $("#vendorFilter").value || 'all';
-      const includeAttachments = $("#includeAttachments").checked ? 'true' : '';
-      const template = $("#template").value;
+      const includeAttachments = $("#includeAttachments").checked;
+      const template = $("#template").value || undefined;
 
       const sections = $$("#sections .tag.active").map(b => b.dataset.section);
 
-      const query = {
+      const queryObj = {
         format,
         vendor_filter: vendorFilter,
-        template,
-        include_attachments: includeAttachments,
         date_range: dateRange
       };
-      if(sections.length) query['include_sections'] = sections;
-      if(dateRange === 'custom'){
-        query['custom_start'] = customStart;
-        query['custom_end']   = customEnd;
+      if (template) queryObj.template = template;
+      if (sections.length) queryObj['include_sections'] = sections;
+      if (includeAttachments) queryObj['include_attachments'] = true;
+      if (dateRange === 'custom'){
+        if (customStart) queryObj['custom_start'] = customStart;
+        if (customEnd)   queryObj['custom_end']   = customEnd;
       }
-      const queryString = qs(query);
+      const queryString = qs(queryObj);
 
       setStatus("Generating conference report…","warn");
-      log("GET", `/reports/conference/${confId}?${queryString}`);
-
       try{
-        const {res, contentType} = await apiFetch(`/reports/conference/${confId}?${queryString}`);
-        // If the endpoint returns a JSON envelope with s3_url+filename per KB, fetch the asset; otherwise download returned body.
+        const {res, contentType, url} = await apiFetch(`/reports/conference/${confId}?${queryString}`);
+        log('GET', url);
+
         if((contentType||'').includes('application/json')){
           const json = await res.json();
-          log(json);
+          log(JSON.stringify(json,null,2));
           if(json.s3_url){
             const fname = json.filename || `conference_report.${format || 'json'}`;
-            const {res: s3res} = await apiFetch(json.s3_url, { headers: {} }); // S3 may not need auth
-            const blob = await s3res.blob();
+            // S3/object URLs typically shouldn't include auth headers
+            const s3 = await fetch(json.s3_url);
+            if(!s3.ok) throw new Error(`S3 download failed: ${s3.status} ${await s3.text().catch(()=>s3.statusText)}`);
+            const blob = await s3.blob();
             fileDownload(blob, fname);
             setStatus(`Report ready → downloaded ${fname}`,"ok");
           }else{
@@ -341,7 +343,7 @@
             setStatus(`Report ready → downloaded ${fname}`,"ok");
           }
         } else {
-          // Probably HTML/PDF/ZIP streamed back
+          // Streamed formats (html/pdf/zip)
           const blob = await res.blob();
           const fallbackExt = contentType.includes('pdf')?'pdf':(contentType.includes('zip')?'zip':(contentType.includes('html')?'html':format||'dat'));
           const fname = `conference_report.${fallbackExt}`;
@@ -360,9 +362,9 @@
       const vendorId = $("#vendorSelect").value;
       if(!vendorId){ setStatus("Select a vendor first (Vendor Report requires vendor).","err"); return; }
       setStatus("Generating vendor report…","warn");
-      log("GET", `/reports/vendor/${vendorId}`);
       try{
-        const {res, contentType} = await apiFetch(`/reports/vendor/${vendorId}`);
+        const {res, contentType, url} = await apiFetch(`/reports/vendor/${vendorId}`);
+        log('GET', url);
         const json = contentType.includes('json') ? await res.json() : { raw: await res.text() };
         const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
         const fname = (json && json.filename) ? json.filename : `vendor_report_${vendorId}.json`;
