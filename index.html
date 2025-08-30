@@ -257,7 +257,7 @@
           <div class="tiny" id="lastTaskIdText">Last task: —</div>
         </div>
       </div>
-      <div class="tiny">On completion, we download from the presigned <span class="kbd">S3_URL</span>/<span class="kbd">s3_url</span> in the final poll JSON (fallback: <span class="kbd">url</span> → inline <span class="kbd">data</span>).</div>
+      <div class="tiny">On completion, we open the presigned <span class="kbd">S3_URL</span>/<span class="kbd">s3_url</span> in a new tab (no fetch). We ignore any <span class="kbd">/reports/status/…</span> URLs for downloads.</div>
     </section>
 
     <!-- Bottom Output -->
@@ -436,7 +436,7 @@
       return { res, contentType, dispo, status, url };
     }
 
-    // ---------- Case-insensitive field access & artifact helpers ----------
+    // ---------- Case-insensitive field access & helpers ----------
     function getFieldCI(obj, ...names){
       if (!obj || typeof obj!=='object') return undefined;
       const map = new Map(Object.keys(obj).map(k => [k.toLowerCase(), k]));
@@ -448,43 +448,39 @@
     }
 
     function looksLikeHtml(s){ return typeof s==='string' && /<!DOCTYPE html|<html/i.test(s); }
-    function looksLikeBase64(s){
-      if (typeof s!=='string') return false;
-      if (/[<>{}]/.test(s)) return false;
-      const cleaned = s.replace(/\s+/g,'');
-      return cleaned.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(cleaned);
-    }
     function base64ToBytes(b64){
       const bin = atob(b64.replace(/\s+/g,''));
       const len = bin.length; const bytes = new Uint8Array(len);
       for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
       return bytes;
     }
+    const isStatusUrl = (u) => { try{ return new URL(u).pathname.includes('/reports/status/'); }catch{ return false; } };
+    const isS3Url = (u) => /amazonaws\.com|\.s3[.-]/i.test(String(u||''));
 
+    // Pick artifact from the status JSON (deep → mid → arrays → map → single)
     function pickArtifactFromStatus(js, desiredFormat){
       const want = (desiredFormat||'').toLowerCase();
 
       const normalize = (obj) => {
         if (!obj || typeof obj!=='object') return null;
-        const url = getFieldCI(obj,'s3_url','S3_URL','s3Url') || getFieldCI(obj,'download_url','result_url','url','href');
-        const s3  = getFieldCI(obj,'s3_url','S3_URL','s3Url'); // keep explicit
-        const fmt = String(getFieldCI(obj,'format','type','format_type','content_type')||'').toLowerCase();
-        const fn  = getFieldCI(obj,'filename','name') || '';
-        const ct  = getFieldCI(obj,'content_type') || '';
-        const data= getFieldCI(obj,'data','data_base64') || null;
-        const isB64 = !!getFieldCI(obj,'data_base64') || (!!data && !looksLikeHtml(data));
-        return { url, s3_url:s3 || null, format:fmt, filename:fn, content_type:ct, data, is_base64:isB64 };
+        const urlAny = getFieldCI(obj,'s3_url','S3_URL','s3Url') || getFieldCI(obj,'download_url','result_url','url','href');
+        const s3     = getFieldCI(obj,'s3_url','S3_URL','s3Url');
+        const fmt    = String(getFieldCI(obj,'format','type','format_type','content_type')||'').toLowerCase();
+        const fn     = getFieldCI(obj,'filename','name') || '';
+        const ct     = getFieldCI(obj,'content_type') || '';
+        const data   = getFieldCI(obj,'data','data_base64') || null;
+        const isB64  = !!getFieldCI(obj,'data_base64');
+        // Drop status URL masquerading as "url"
+        const urlClean = (urlAny && isStatusUrl(urlAny)) ? null : urlAny;
+        return { url: urlClean, s3_url: s3 || null, format:fmt, filename:fn, content_type:ct, data, is_base64:isB64 };
       };
 
-      // deepest
       const deep = normalize(getFieldCI(js,'result')?.result);
       if (deep && (deep.data || deep.url || deep.s3_url)) return deep;
 
-      // middle
       const mid = normalize(getFieldCI(js,'result'));
       if (mid && (mid.data || mid.url || mid.s3_url)) return mid;
 
-      // arrays
       const files = getFieldCI(js,'files');
       if (Array.isArray(files) && files.length){
         const exact = files.find(f => (String(getFieldCI(f,'format')||'').toLowerCase()===want) || (String(getFieldCI(f,'filename')||'').toLowerCase().endsWith('.'+want)));
@@ -496,7 +492,6 @@
         return normalize(exact || arts[0]);
       }
 
-      // object map
       const results = getFieldCI(js,'results');
       if (results && typeof results==='object'){
         const keys = Object.keys(results);
@@ -504,34 +499,51 @@
         return normalize(results[keyExact || keys[0]]);
       }
 
-      // single
       const single = normalize(getFieldCI(js,'file') || js);
       if (single && (single.data || single.url || single.s3_url)) return single;
 
       return null;
     }
 
-    const preferredLink = (art) => art?.s3_url || art?.url || null;
+    // Prefer S3; never return a status URL
+    function preferredLink(art){
+      if (!art) return null;
+      if (art.s3_url) return art.s3_url;
+      if (art.url && !isStatusUrl(art.url)) return art.url;
+      return null;
+    }
+
+    // Open S3 (or other foreign) links directly to dodge CORS
+    function openDirect(link, suggestedName){
+      const a = document.createElement('a');
+      a.href = link;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      // download attr is ignored cross-origin, but harmless to set:
+      if (suggestedName) a.setAttribute('download', suggestedName);
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(()=> a.remove(), 50);
+    }
 
     async function downloadArtifactLink(link, suggestedName, format){
-      const accept = acceptFor(format);
-      const linkUrl = new URL(link, window.location.href);
       const apiOrigin = new URL(apiBase, window.location.href).origin;
-      const isForeign = linkUrl.origin !== apiOrigin;
+      const linkOrigin = new URL(link, window.location.href).origin;
 
-      let resp;
-      if (isForeign){
-        resp = await fetchDirect(link, { headers:{ 'Accept': accept } });
-        log('GET', link);
-      } else {
-        const r = await apiFetchSmart(link, { headers:{ 'Accept': accept } }, { tryQueryKeyFallback:true });
-        log('GET', maskKeyInUrl(r.url));
-        resp = r;
+      // If S3 (or any foreign origin), open directly to avoid CORS fetches
+      if (isS3Url(link) || linkOrigin !== apiOrigin){
+        log('OPEN', link);
+        openDirect(link, suggestedName || `report.${extFrom(format)}`);
+        setStatus(`Report ready → opened file from S3.`, 'ok');
+        return;
       }
 
-      const filename = pickFilename(resp.dispo, suggestedName || 'report', format, resp.contentType);
-      const blob = await resp.res.blob();
-      fileDownload(blob, ensureExt(filename, format, resp.contentType));
+      // Same-origin with API → safe to fetch & save with filename
+      const r = await apiFetchSmart(link, { headers:{ 'Accept': acceptFor(format) } }, { tryQueryKeyFallback:true });
+      log('GET', maskKeyInUrl(r.url));
+      const filename = pickFilename(r.dispo, suggestedName || 'report', format, r.contentType);
+      const blob = await r.res.blob();
+      fileDownload(blob, ensureExt(filename, format, r.contentType));
       setStatus(`Report ready → downloaded ${filename}.`,'ok');
     }
 
@@ -550,7 +562,7 @@
       return `${base}.${ext || 'dat'}`;
     }
 
-    // ---------- Polling & download (uses final poll JSON; S3 first, CI keys) ----------
+    // ---------- Polling & download (use final poll JSON; S3 first; no status-url downloads) ----------
     async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
       lastStartUrl = startUrl;
       $("#btnRegenLast").disabled = false;
@@ -595,7 +607,7 @@
         if (st === 'failed' || st === 'error') throw new Error('Report generation failed.');
       }
 
-      // Pick artifact from the completed poll; ALWAYS prefer S3 URL (any casing)
+      // Pick artifact; ALWAYS prefer S3; never a status URL
       const art = pickArtifactFromStatus(completedJson, format);
       if (art){
         const link = preferredLink(art);
@@ -616,7 +628,7 @@
       return downloadFromResponse(dl, filenameBase, format);
     }
 
-    // ---------- Envelope-aware download (still prefers S3 if present, CI keys) ----------
+    // ---------- Envelope-aware download (prefers S3; ignores status URLs) ----------
     async function downloadFromResponse(resp, base, format){
       const ct = resp.contentType || '';
       if (ct.includes('application/json')){
@@ -635,7 +647,10 @@
           }
         }
 
-        const followUrl = getFieldCI(json,'s3_url','S3_URL','s3Url') || getFieldCI(json,'download_url','result_url','url');
+        // Fallback: only follow non-status URL, prefer S3
+        const s3 = getFieldCI(json,'s3_url','S3_URL','s3Url');
+        const maybe = s3 || getFieldCI(json,'download_url','result_url','url');
+        const followUrl = (maybe && !isStatusUrl(maybe)) ? maybe : null;
         if (followUrl){
           await downloadArtifactLink(followUrl, getFieldCI(json,'filename') || `${base}.${extFrom(format)}`, format);
           return;
