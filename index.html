@@ -110,13 +110,8 @@
           <div class="tiny">Loaded from vendor report when you pick a vendor.</div>
         </div>
         <div>
-          <label for="vendorFilter">Vendor Filter</label>
-          <select id="vendorFilter">
-            <option value="all">all</option>
-            <option value="visited">visited</option>
-            <option value="unvisited">unvisited</option>
-            <option value="high_priority">high_priority</option>
-          </select>
+          <label>&nbsp;</label>
+          <div class="tiny">Tip: select a single vendor to populate sessions.</div>
         </div>
       </div>
     </section>
@@ -245,6 +240,27 @@
       </section>
     </section>
 
+    <!-- Advanced Workflows -->
+    <section class="card" aria-labelledby="adv" style="margin-top:14px">
+      <h2 id="adv" style="margin-top:0">Advanced Workflows</h2>
+      <div class="row">
+        <div>
+          <label>Regenerate last started report</label>
+          <button id="btnRegenLast" disabled>Regenerate Last</button>
+          <div class="tiny" id="lastStartUrl">Last: —</div>
+        </div>
+        <div>
+          <label for="taskIdInput">Task ID</label>
+          <input id="taskIdInput" placeholder="paste a task_id to check or download" />
+          <div class="btnbar" style="margin-top:8px">
+            <button id="btnCheckTask" class="secondary">Check Status</button>
+            <button id="btnDownloadTask" class="secondary">Download by Task ID</button>
+          </div>
+        </div>
+      </div>
+      <div class="tiny">Tip: If status doesn’t expose a direct download URL, re-call the original start URL with <span class="kbd">completed=true</span>.</div>
+    </section>
+
     <!-- Bottom Output -->
     <footer id="outputBar">
       <aside class="card" aria-live="polite" id="logPanel">
@@ -285,7 +301,7 @@
     };
 
     const delay = (ms) => new Promise(r => setTimeout(r, ms));
-    const maskKeyInUrl = (u) => u.replace(/(api_key=)[^&]+/i, '$1****');
+    const maskKeyInUrl = (u) => u.replace(/(api_key=)[^&]+/ig, '$1****');
 
     // ---------- Creds storage ----------
     const LS_BASE_KEY = 'cb_api_base';
@@ -336,64 +352,110 @@
       }
     });
 
+    // ---------- Robust URL builders (fix for double /api) ----------
+    const API_URL = {
+      get origin() {
+        try { return new URL(apiBase).origin; } catch { return apiBase.replace(/\/api\/?$/,''); }
+      },
+      get hasApiSuffix() { return /\/api\/?$/i.test(apiBase); }
+    };
+
+    function buildUrl(pathOrUrl) {
+      if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+
+      // If the API hands back /api/... use site origin to avoid duplicating /api
+      if (pathOrUrl.startsWith('/api/')) {
+        return API_URL.origin + pathOrUrl;
+      }
+
+      // If it starts with / (but not /api/), resolve relative to current apiBase path
+      if (pathOrUrl.startsWith('/')) {
+        return (API_URL.hasApiSuffix ? apiBase : (API_URL.origin + '/api')) + pathOrUrl;
+      }
+
+      // Otherwise treat as relative to apiBase
+      const sep = apiBase.endsWith('/') ? '' : '/';
+      return apiBase + sep + pathOrUrl;
+    }
+
+    function withParam(pathOrUrl, key, value) {
+      const u = new URL(buildUrl(pathOrUrl));
+      if (value === undefined || value === null || value === '') {
+        u.searchParams.delete(key);
+      } else {
+        u.searchParams.set(key, value);
+      }
+      return u.toString();
+    }
+
     // ---------- CORS-smart fetch ----------
     function isLikelyCorsOrNetwork(err){
       return /NetworkError|Failed to fetch|TypeError/i.test(String(err && err.message || err));
     }
-    async function rawFetch(url, opts={}){
-      const res = await fetch(url, { ...opts, mode: 'cors', redirect: 'follow' });
+
+    async function rawFetch(fullUrl, opts={}){
+      const res = await fetch(fullUrl, { ...opts, mode: 'cors', redirect: 'follow' });
       const contentType = res.headers.get('content-type') || '';
-      const dispo = res.headers.get('content-disposition') || '';
-      const status = res.status;
+      const dispo       = res.headers.get('content-disposition') || '';
+      const status      = res.status;
       if(!res.ok){
         let details = '';
         try { details = await res.text(); } catch {}
-        throw new Error(`HTTP ${status} at ${url} – ${details || res.statusText}`);
+        throw new Error(`HTTP ${status} at ${fullUrl} – ${details || res.statusText}`);
       }
       return { res, contentType, dispo, status };
     }
-    async function apiFetchSmart(path, opts={}, { tryQueryKeyFallback = true } = {}){
-      const base = path.startsWith('http') ? path : `${apiBase}${path}`;
+
+    async function apiFetchSmart(pathOrUrl, opts={}, { tryQueryKeyFallback = true } = {}){
+      // Attempt 1: header auth
+      const full = buildUrl(pathOrUrl);
       const headers = { 'X-API-Key': apiKey, ...(opts.headers||{}) };
       try {
-        const r = await rawFetch(base, { ...opts, headers });
-        return { ...r, url: base, usedQueryKey:false };
+        const r = await rawFetch(full, { ...opts, headers });
+        return { ...r, url: full, usedQueryKey:false };
       } catch (err) {
         if (!tryQueryKeyFallback || !isLikelyCorsOrNetwork(err)) throw err;
         log('⚠️ Header-auth failed (likely CORS). Retrying with api_key in query…');
       }
-      const [urlNoQuery, q=''] = base.split('?'); const sep = q ? '&' : '?';
-      const withKey = `${urlNoQuery}${q ? '?'+q : ''}${sep}api_key=${encodeURIComponent(apiKey)}`;
+
+      // Attempt 2: put key in query (no custom headers => no preflight)
+      const withKey = withParam(full, 'api_key', apiKey);
       const r2 = await rawFetch(withKey, { ...opts, headers: {} });
       return { ...r2, url: withKey, usedQueryKey:true };
     }
 
     // ---------- Polling workflow (202 -> /status -> completed=true) ----------
+    let lastStartUrl = ''; // keep the last start URL for "Regenerate Last"
+
     async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
-      // 1) Kick off generation (or direct JSON)
+      lastStartUrl = buildUrl(startUrl);
+      $("#btnRegenLast").disabled = false;
+      $("#lastStartUrl").textContent = `Last: ${maskKeyInUrl(lastStartUrl)}`;
+
       let start;
       try {
         start = await apiFetchSmart(startUrl);
       } catch (e) {
-        // Some proxies reject header on first call; retry with URL key if we didn't already
         start = await apiFetchSmart(startUrl, {}, { tryQueryKeyFallback: true });
       }
 
       log('GET', maskKeyInUrl(start.url));
 
       if (start.status === 200) {
-        // JSON direct or occasionally direct file
         return downloadFromResponse(start, filenameBase, format);
       }
 
       if (start.status === 202) {
         const body = await start.res.json();
-        const taskId = body.task_id;
-        const statusPath = body.check_status_url || `/api/reports/status/${taskId}`;
-        const statusUrl = statusPath.startsWith('http') ? statusPath : `${apiBase}${statusPath}`;
+        const taskId = body.task_id || body.id;
+        const statusPath =
+          body.check_status_url ||
+          body.status_url ||
+          `/reports/status/${taskId}`;
+
         log(`Task queued: ${taskId}. Polling status…`);
 
-        // 2) Poll until completed/failed
+        // Poll until completed/failed
         while (true) {
           await delay(3000);
           const status = await apiFetchSmart(statusPath);
@@ -403,9 +465,8 @@
           if (js.status === 'failed') throw new Error('Report generation failed.');
         }
 
-        // 3) Download with completed=true
-        const dlSep = startUrl.includes('?') ? '&' : '?';
-        const dlUrl = `${startUrl}${dlSep}completed=true`;
+        // Re-GET with completed=true
+        const dlUrl = withParam(startUrl, 'completed', 'true');
         const dl = await apiFetchSmart(dlUrl);
         log('GET', maskKeyInUrl(dl.url));
         return downloadFromResponse(dl, filenameBase, format);
@@ -415,7 +476,6 @@
     }
 
     async function downloadFromResponse(resp, base, format){
-      // Prefer Content-Disposition filename when present
       const filename = pickFilename(resp.dispo, base, format, resp.contentType);
       if ((resp.contentType||'').includes('application/json')) {
         const json = await resp.res.json();
@@ -430,10 +490,8 @@
     }
 
     function pickFilename(dispo, base, format, ct){
-      // Try Content-Disposition
-      const m = /filename\\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo||'');
+      const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo||'');
       if (m) return decodeURIComponent(m[1] || m[2]);
-      // Else infer from content-type / requested format
       let ext = format;
       if (ct) {
         if (ct.includes('pdf')) ext='pdf';
@@ -581,7 +639,7 @@
       setStatus("Generating vendor(s) report…","warn");
 
       try{
-        // If JSON and none selected, bundle all vendors for the conference (JSON)
+        // JSON bundle for all vendors if none selected
         if(format === 'json' && chosen.length === 0){
           const q = qs({ conference_id: confId, limit: 100, offset: 0 });
           const {res, contentType, url} = await apiFetchSmart(`/vendors?${q}`);
@@ -591,8 +649,7 @@
 
           const results = [];
           for(const id of vendorIds){
-            const url = `/reports/vendor/${id}?format=json`;
-            const r = await apiFetchSmart(url);
+            const r = await apiFetchSmart(`/reports/vendor/${id}?format=json`);
             log('GET', r.url);
             const json = await r.res.json();
             results.push(json);
@@ -604,8 +661,8 @@
           return;
         }
 
-        // Otherwise: for selected vendors, download each per new workflow
-        const ids = chosen.length ? chosen : (format==='json' ? [] : []); // non-JSON with none selected does nothing
+        // Otherwise, per-vendor download using new workflow
+        const ids = chosen.length ? chosen : [];
         if(ids.length === 0 && format !== 'json'){
           setStatus('Select at least one vendor for non-JSON formats.','err'); return;
         }
@@ -618,6 +675,62 @@
         console.error(e); setStatus(`Vendor(s) report failed: ${e.message}`,"err"); log(e.message);
       }
     }
+
+    // ---------- Advanced Workflows ----------
+    $("#btnRegenLast").addEventListener('click', async () => {
+      if(!lastStartUrl){ setStatus('No previous report URL yet.','err'); return; }
+      setStatus('Regenerating last report…','warn');
+      try{
+        const path = new URL(lastStartUrl).pathname;
+        const base =
+          path.includes('/conference/') ? 'conference_report' :
+          path.includes('/day/')        ? 'eod_report' :
+          path.includes('/session/')    ? 'session_report' :
+          path.includes('/vendor/')     ? 'vendor_report' : 'report';
+        const fmtMatch = /[?&]format=([^&]+)/.exec(lastStartUrl);
+        const fmt = fmtMatch ? decodeURIComponent(fmtMatch[1]) : 'json';
+        await runReportAndDownload({ startUrl: lastStartUrl, filenameBase: base, format: fmt });
+      }catch(e){
+        console.error(e); setStatus(`Regenerate failed: ${e.message}`,'err'); log(e.message);
+      }
+    });
+
+    $("#btnCheckTask").addEventListener('click', async () => {
+      const id = $("#taskIdInput").value.trim();
+      if(!id){ setStatus('Enter a task_id first.','err'); return; }
+      setStatus('Checking task status…','warn');
+      try{
+        const r = await apiFetchSmart(`/reports/status/${encodeURIComponent(id)}`);
+        log('GET', r.url);
+        const js = await r.res.json();
+        log(JSON.stringify(js, null, 2));
+        setStatus(`Task ${id} → ${js.status}`,'ok');
+      }catch(e){
+        console.error(e); setStatus(`Check failed: ${e.message}`,'err'); log(e.message);
+      }
+    });
+
+    $("#btnDownloadTask").addEventListener('click', async () => {
+      const id = $("#taskIdInput").value.trim();
+      if(!id){ setStatus('Enter a task_id first.','err'); return; }
+      setStatus('Downloading by task…','warn');
+      try{
+        const r = await apiFetchSmart(`/reports/status/${encodeURIComponent(id)}`);
+        const js = await r.res.json();
+        log(JSON.stringify(js, null, 2));
+
+        const dlField = js.download_url || js.result_url || js.url;
+        if(dlField){
+          const dl = await apiFetchSmart(dlField);
+          await downloadFromResponse(dl, `report_${id}`, 'dat');
+          return;
+        }
+
+        setStatus('Status has no download URL; re-run using the original start button, then it will auto-download when completed.','warn');
+      }catch(e){
+        console.error(e); setStatus(`Download failed: ${e.message}`,'err'); log(e.message);
+      }
+    });
 
     // ---------- Button wiring ----------
     async function withButtonsDisabled(fn){
