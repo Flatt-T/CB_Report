@@ -1,74 +1,932 @@
-<script>
-// ... keep everything else unchanged above ...
-
-async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
-  lastStartUrl = startUrl;
-  $("#btnRegenLast").disabled = false;
-  $("#lastStartUrl").textContent = `Last: ${ (new URL(buildUrl(startUrl))).toString().replace(/(api_key=)[^&]+/ig,'$1****') }`;
-
-  // Kickoff expects JSON (202 Accepted envelope)
-  let start;
-  try {
-    start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } });
-  } catch (e) {
-    start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } }, { tryQueryKeyFallback: true });
-  }
-  log('GET', start.url.replace(/(api_key=)[^&]+/ig,'$1****'));
-
-  if (start.status === 200) {
-    return downloadFromResponse(start, filenameBase, format);
-  }
-
-  if (start.status !== 202) {
-    throw new Error(`Unexpected response: HTTP ${start.status}`);
-  }
-
-  const body = await start.res.json();
-  const taskId = body.task_id || body.id;
-  lastTaskId = taskId || lastTaskId;
-  if (lastTaskId){
-    $("#taskIdInput").value = lastTaskId;
-    $("#lastTaskIdText").textContent = `Last task: ${lastTaskId}`;
-  }
-  const statusPath = body.check_status_url || body.status_url || `/reports/status/${encodeURIComponent(taskId)}`;
-  const statusUrl  = buildUrl(statusPath);
-  log(`Task queued: ${taskId}. Polling status via ${statusUrl}…`);
-
-  // 🔁 Poll until completed; CAPTURE the COMPLETED JSON here
-  let completedJson = null;
-  while (true) {
-    await new Promise(r => setTimeout(r, 3000));
-    const status = await apiFetchSmart(statusUrl, { headers:{ 'Accept':'application/json' } });
-    const js = await status.res.json();
-    const st = (js.status || js.result?.status || '').toLowerCase();
-    log(`status=${st || 'unknown'}`);
-    if (st === 'completed' || st === 'success' || st === 'done') { completedJson = js; break; }
-    if (st === 'failed' || st === 'error') throw new Error('Report generation failed.');
-  }
-
-  // ⬇️ No second GET — use the completed payload we just received
-  let statusJson = completedJson;
-
-  // Pick artifact; ALWAYS prefer s3_url per your latest backend
-  const art = pickArtifactFromStatus(statusJson, format);
-  if (art){
-    const link = art.s3_url || art.url || null;
-    if (link){
-      await downloadArtifactLink(link, art.filename || `${filenameBase}.${extFrom(format)}`, format);
-      return;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Conference Buddy – Reports</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#121820; --muted:#7b8a9a; --text:#e6eef6; --accent:#7dd3fc; --accent2:#a78bfa; --good:#34d399; --warn:#f59e0b; --bad:#ef4444;
+      --br:14px;
     }
-    if (art.data){
-      await downloadArtifactData(art, `${filenameBase}.${extFrom(format)}`, format);
-      return;
+    *{box-sizing:border-box}
+    body{margin:0; font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; background:linear-gradient(180deg,#0b0f14,#0a0e13 35%,#0b0f14); color:var(--text)}
+    .wrap{max-width:1100px; margin:40px auto; padding:0 20px}
+    header{display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px}
+    h1{font-size:clamp(20px,3vw,28px); margin:0}
+    .card{background:rgba(18,24,32,.8); border:1px solid rgba(125,211,252,.12); border-radius:var(--br); padding:18px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    .grid{display:grid; gap:14px}
+    .grid.cols-3{grid-template-columns:1fr}
+    @media(min-width:980px){ .grid.cols-3{grid-template-columns:1.1fr 1fr 1fr} }
+    label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px}
+    input, select, button{width:100%}
+    input, select{background:#0f141b; color:var(--text); border:1px solid rgba(255,255,255,.08); padding:10px 12px; border-radius:10px; outline:none}
+    input::placeholder{color:#5e6b79}
+    .row{display:grid; gap:12px; grid-template-columns:1fr}
+    @media(min-width:640px){ .row{grid-template-columns:1fr 1fr} }
+    .tiny{font-size:12px; color:var(--muted)}
+    .hint{color:#9fb0c3; font-size:12px}
+    .inline{display:flex; gap:10px; align-items:center}
+    .btnbar{display:flex; flex-wrap:wrap; gap:10px}
+    button{background:linear-gradient(180deg, rgba(125,211,252,.14), rgba(167,139,250,.14)); border:1px solid rgba(255,255,255,.12); color:var(--text); padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:600}
+    button.secondary{background:transparent}
+    button.ghost{background:transparent; border-style:dashed}
+    button:disabled{opacity:.55; cursor:not-allowed}
+    .status{margin-top:12px; font-size:13px}
+    .status span{padding:4px 8px; border-radius:999px}
+    .ok{background:rgba(52,211,153,.12); color:var(--good)}
+    .warn{background:rgba(245,158,11,.12); color:var(--warn)}
+    .err{background:rgba(239,68,68,.12); color:var(--bad)}
+    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; background:#0d1218; border:1px solid rgba(255,255,255,.08); padding:2px 6px; border-radius:6px}
+    .divider{height:1px; background:linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent); margin:14px 0}
+    footer#outputBar{position:sticky; bottom:0; margin-top:16px}
+    #logPanel{max-height:260px; overflow:auto}
+    .row.actions{grid-template-columns: auto auto 1fr auto}
+    @media(max-width:640px){ .row.actions{grid-template-columns:1fr 1fr} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🧭 Conference Buddy – Reports</h1>
+      <div class="inline hint">
+        <span class="kbd">/api/conferences</span>
+        <span class="kbd">/api/vendors</span>
+        <span class="kbd">/api/reports/*</span>
+      </div>
+    </header>
+
+    <!-- Configuration -->
+    <section class="card" aria-labelledby="cfg">
+      <h2 id="cfg" style="margin-top:0">Configuration</h2>
+      <div class="row">
+        <div>
+          <label for="baseUrl">API Base URL</label>
+          <input id="baseUrl" type="url" placeholder="https://example.com/api" />
+          <div class="tiny">Default: <span class="kbd">https://conference-buddy-geoutils.replit.app/api</span></div>
+        </div>
+        <div>
+          <label for="apiKey">API Key</label>
+          <input id="apiKey" type="password" placeholder="••••••••" />
+          <div class="tiny">Saved only in this browser (localStorage).</div>
+        </div>
+      </div>
+
+      <div class="row actions" style="align-items:center; gap:10px; margin-top:6px">
+        <button id="btnSaveRefresh">Save & Refresh</button>
+        <button id="btnRefresh" class="secondary">Refresh</button>
+        <div class="tiny" id="lastRefreshed">Last refreshed: —</div>
+        <button id="btnClearCreds" class="ghost" title="Clear saved base URL & API key">Clear saved creds</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 style="margin:8px 0 6px">Scope</h3>
+      <div class="row">
+        <div>
+          <label for="conferenceSelect">Conference</label>
+          <select id="conferenceSelect"></select>
+          <div class="tiny">From <span class="kbd">/api/conferences</span>.</div>
+        </div>
+        <div>
+          <label for="vendorSelect">Vendor (multi-select optional)</label>
+          <select id="vendorSelect" multiple size="5">
+            <option value="">— All vendors —</option>
+          </select>
+          <div class="tiny">Hold <b>Ctrl/⌘</b> to select multiple.</div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="sessionSelect">Session (optional)</label>
+          <select id="sessionSelect"><option value="">— All sessions —</option></select>
+          <div class="tiny">Loaded from vendor report when you pick a vendor.</div>
+        </div>
+        <div>
+          <label for="vendorFilter">Vendor Filter</label>
+          <select id="vendorFilter">
+            <option value="all">all</option>
+            <option value="visited">visited</option>
+            <option value="unvisited">unvisited</option>
+            <option value="high_priority">high_priority</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- Report Options -->
+    <section class="grid cols-3">
+      <!-- Conference Report -->
+      <section class="card" aria-labelledby="confrep">
+        <h2 id="confrep" style="margin-top:0">Conference Report</h2>
+        <div class="row">
+          <div>
+            <label>Format</label>
+            <select id="formatConf">
+              <option value="html">html</option>
+              <option value="pdf">pdf</option>
+              <option value="json">json</option>
+              <option value="zip">zip</option>
+            </select>
+          </div>
+          <div>
+            <label>Template (optional)</label>
+            <select id="templateConf">
+              <option value="">(default)</option>
+              <option value="executive">executive</option>
+              <option value="detailed">detailed</option>
+              <option value="summary">summary</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="inline" style="gap:8px; align-items:end">
+            <div style="flex:1">
+              <label for="includeAttachments">Include attachments in ZIP</label>
+              <input id="includeAttachments" type="checkbox" />
+            </div>
+          </div>
+          <div class="inline" style="gap:8px; align-items:end">
+            <div style="flex:1">
+              <label for="forceBgConf">Force background</label>
+              <input id="forceBgConf" type="checkbox" />
+            </div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="btnbar">
+          <button id="btnConfReport">Generate Conference Report</button>
+        </div>
+      </section>
+
+      <!-- End of Day Report -->
+      <section class="card" aria-labelledby="eodrep">
+        <h2 id="eodrep" style="margin-top:0">End-of-Day Report</h2>
+        <div class="row">
+          <div>
+            <label>Day</label>
+            <input type="date" id="eodDate">
+          </div>
+          <div>
+            <label>Format</label>
+            <select id="eodFormat">
+              <option value="html">html</option>
+              <option value="pdf">pdf</option>
+              <option value="json">json</option>
+              <option value="zip">zip</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="inline" style="gap:8px; align-items:end">
+            <div style="flex:1">
+              <label for="forceBgEod">Force background</label>
+              <input id="forceBgEod" type="checkbox" />
+            </div>
+          </div>
+          <div></div>
+        </div>
+        <div class="tiny">Uses <span class="kbd">/api/reports/day/:conference_id/:date</span>.</div>
+        <div class="divider"></div>
+        <div class="btnbar">
+          <button id="btnEodReport">Generate End-of-Day Report</button>
+        </div>
+      </section>
+
+      <!-- Session / Vendor(s) -->
+      <section class="card" aria-labelledby="svrep">
+        <h2 id="svrep" style="margin-top:0">Session / Vendor(s)</h2>
+
+        <div class="row">
+          <div>
+            <label>Session Report</label>
+            <select id="sessionForReport"><option value="">— choose from Sessions dropdown above —</option></select>
+          </div>
+          <div>
+            <label>Session Format</label>
+            <select id="sessionFormat">
+              <option value="json">json</option>
+              <option value="pdf">pdf</option>
+              <option value="html">html</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="row">
+          <div>
+            <label>Vendor(s) Report</label>
+            <div class="tiny">Select one or more vendors above — none = all vendors (JSON bundle).</div>
+          </div>
+          <div>
+            <label>Vendor Format</label>
+            <select id="vendorFormat">
+              <option value="json">json (bundle if multiple)</option>
+              <option value="pdf">pdf (per vendor)</option>
+              <option value="html">html (per vendor)</option>
+              <option value="zip">zip (per vendor)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+        <div class="btnbar">
+          <button id="btnSessionReport" class="secondary">Generate Session Report</button>
+          <button id="btnVendorsReport" class="secondary">Generate Vendor(s) Report</button>
+        </div>
+      </section>
+    </section>
+
+    <!-- Advanced Workflows -->
+    <section class="card" aria-labelledby="adv" style="margin-top:14px">
+      <h2 id="adv" style="margin-top:0">Advanced Workflows</h2>
+      <div class="row">
+        <div>
+          <label>Regenerate last started report</label>
+          <button id="btnRegenLast" disabled>Regenerate Last</button>
+          <div class="tiny" id="lastStartUrl">Last: —</div>
+        </div>
+        <div>
+          <label for="taskIdInput">Task ID</label>
+          <input id="taskIdInput" placeholder="paste a task_id to check or download" />
+          <div class="btnbar" style="margin-top:8px">
+            <button id="btnCheckTask" class="secondary">Check Status</button>
+            <button id="btnDownloadTask" class="secondary">Download by Task ID</button>
+          </div>
+          <div class="tiny" id="lastTaskIdText">Last task: —</div>
+        </div>
+      </div>
+      <div class="tiny">On completion, we download from the expiring <span class="kbd">s3_url</span> in the final poll JSON (fallback: <span class="kbd">url</span> → inline <span class="kbd">data</span>).</div>
+    </section>
+
+    <!-- Bottom Output -->
+    <footer id="outputBar">
+      <aside class="card" aria-live="polite" id="logPanel">
+        <h2 style="margin-top:0">Output</h2>
+        <div id="log" class="tiny" style="white-space:pre-wrap;"></div>
+        <div class="status" id="status"></div>
+      </aside>
+    </footer>
+  </div>
+
+  <span class="sr" aria-live="polite" id="live" style="position:absolute;left:-9999px"></span>
+
+  <script>
+    // ---------- Tiny DOM helpers ----------
+    const $  = sel => document.querySelector(sel);
+    const $$ = sel => Array.from(document.querySelectorAll(sel));
+    const live = (text) => { $("#live").textContent = text; };
+    const log = (...args) => {
+      const msg = args.map(a => (typeof a==='string'? a : JSON.stringify(a,null,2))).join(' ');
+      const el=$("#log"); el.textContent += (msg + "\n"); el.scrollTop = el.scrollHeight; live(msg);
+    };
+    const setStatus = (text, type="ok") => { $("#status").innerHTML = text ? `<span class="${type}">${text}</span>` : ""; };
+
+    // ---------- Defaults & state ----------
+    const DEFAULT_BASE = "https://conference-buddy-geoutils.replit.app/api";
+    const DEFAULT_KEY  = "5UtGAI40f0vUXWqSdr547POSAWJ6u2g6CdldegSg";
+    const LS_BASE_KEY = 'cb_api_base';
+    const LS_KEY_KEY  = 'cb_api_key';
+
+    let apiBase = DEFAULT_BASE;
+    let apiKey  = DEFAULT_KEY;
+    let lastStartUrl = ''; // for "Regenerate Last"
+    let lastTaskId = '';   // capture the ai_report_* id
+
+    $("#baseUrl").value = DEFAULT_BASE;
+    $("#apiKey").value  = DEFAULT_KEY;
+
+    // ---------- Creds storage ----------
+    function saveCredsToLocalStorage(){
+      try{
+        localStorage.setItem(LS_BASE_KEY, $("#baseUrl").value.trim());
+        localStorage.setItem(LS_KEY_KEY,  $("#apiKey").value.trim());
+        log('💾 Saved credentials to localStorage.');
+      }catch(e){ log('⚠️ Could not save to localStorage:', e.message); }
     }
-  }
+    function loadCredsFromLocalStorage(){
+      try{
+        const base = localStorage.getItem(LS_BASE_KEY);
+        const key  = localStorage.getItem(LS_KEY_KEY);
+        if(base){ $("#baseUrl").value = base; apiBase = base; }
+        if(key){  $("#apiKey").value  = key;  apiKey  = key;  }
+        if(base || key) log('🔑 Loaded credentials from localStorage.');
+      }catch(e){ /* ignore */ }
+    }
+    function clearCredsFromLocalStorage(){
+      try{
+        localStorage.removeItem(LS_BASE_KEY);
+        localStorage.removeItem(LS_KEY_KEY);
+        log('🧹 Cleared saved credentials.');
+      }catch(e){ /* ignore */ }
+    }
 
-  // Fallback (very rare): completed=true on the starter URL
-  const dlUrl = withParam(startUrl, 'completed', 'true');
-  const dl = await apiFetchSmart(dlUrl, { headers:{ 'Accept': acceptFor(format) } });
-  log('GET', dl.url.replace(/(api_key=)[^&]+/ig,'$1****'));
-  return downloadFromResponse(dl, filenameBase, format);
-}
+    // reflect inputs into state
+    $("#baseUrl").addEventListener('input', e => apiBase = e.target.value.trim() || DEFAULT_BASE);
+    $("#apiKey").addEventListener('input',  e => apiKey  = e.target.value.trim()  || DEFAULT_KEY);
+    $("#apiKey").addEventListener('keydown', (e) => { if(e.key==='Enter'){ e.preventDefault(); $("#btnSaveRefresh").click(); }});
 
-// ... keep everything else unchanged below ...
-</script>
+    // ---------- Utils ----------
+    const delay = (ms) => new Promise(r => setTimeout(r, ms));
+    const maskKeyInUrl = (u) => u.replace(/(api_key=)[^&]+/ig, '$1****');
+
+    const qs = (obj) => {
+      const parts = [];
+      for (const [k,v] of Object.entries(obj||{})) {
+        if (v===undefined || v===null || v==="") continue;
+        if (Array.isArray(v)) v.forEach(x => parts.push(`${encodeURIComponent(k)}[]=${encodeURIComponent(x)}`));
+        else parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+      }
+      return parts.join('&');
+    };
+
+    function acceptFor(format){
+      switch ((format||'').toLowerCase()){
+        case 'html': return 'text/html';
+        case 'pdf':  return 'application/pdf';
+        case 'zip':  return 'application/zip';
+        default:     return 'application/json';
+      }
+    }
+    function extFrom(formatOrCt){
+      const s = (formatOrCt||'').toLowerCase();
+      if (s.includes('pdf') || s==='pdf')   return 'pdf';
+      if (s.includes('html')|| s==='html')  return 'html';
+      if (s.includes('zip') || s==='zip')   return 'zip';
+      return 'json';
+    }
+    function ensureExt(name, format, ct){
+      const want = extFrom(format || ct);
+      if (new RegExp(`\\.${want}$`, 'i').test(name)) return name;
+      return `${name.replace(/\.(json|pdf|zip|html)$/i,'')}.${want}`;
+    }
+
+    const fileDownload = (blob, filename) => {
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename||'download'; document.body.appendChild(a); a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    };
+
+    // ---------- Robust URL builder (avoids /api/api) ----------
+    const API_URL = {
+      get origin() {
+        try { return new URL(apiBase).origin; } catch { return apiBase.replace(/\/api\/?$/,''); }
+      },
+      get hasApiSuffix() { return /\/api\/?$/i.test(apiBase); }
+    };
+
+    function buildUrl(pathOrUrl) {
+      if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+      if (pathOrUrl.startsWith('/api/')) {
+        return API_URL.origin + pathOrUrl;
+      }
+      if (pathOrUrl.startsWith('/')) {
+        return (API_URL.hasApiSuffix ? apiBase : (API_URL.origin + '/api')) + pathOrUrl;
+      }
+      const sep = apiBase.endsWith('/') ? '' : '/';
+      return apiBase + sep + pathOrUrl;
+    }
+
+    function withParam(pathOrUrl, key, value) {
+      const u = new URL(buildUrl(pathOrUrl));
+      if (value === undefined || value === null || value === '') { u.searchParams.delete(key); }
+      else { u.searchParams.set(key, value); }
+      return u.toString();
+    }
+
+    // ---------- CORS-smart fetch ----------
+    function isLikelyCorsOrNetwork(err){
+      return /NetworkError|Failed to fetch|TypeError/i.test(String(err && err.message || err));
+    }
+    async function rawFetch(fullUrl, opts={}){
+      const res = await fetch(fullUrl, { ...opts, mode: 'cors', redirect: 'follow' });
+      const contentType = res.headers.get('content-type') || '';
+      const dispo       = res.headers.get('content-disposition') || '';
+      const status      = res.status;
+      if(!res.ok){
+        let details = '';
+        try { details = await res.text(); } catch {}
+        throw new Error(`HTTP ${status} at ${fullUrl} – ${details || res.statusText}`);
+      }
+      return { res, contentType, dispo, status };
+    }
+    async function apiFetchSmart(pathOrUrl, opts={}, { tryQueryKeyFallback = true } = {}){
+      const full = buildUrl(pathOrUrl);
+      const headers = { 'X-API-Key': apiKey, ...(opts.headers||{}) };
+      try {
+        const r = await rawFetch(full, { ...opts, headers });
+        return { ...r, url: full, usedQueryKey:false };
+      } catch (err) {
+        if (!tryQueryKeyFallback || !isLikelyCorsOrNetwork(err)) throw err;
+        log('⚠️ Header-auth failed (likely CORS). Retrying with api_key in query…');
+      }
+      const withKey = withParam(full, 'api_key', apiKey);
+      const r2 = await rawFetch(withKey, { ...opts, headers: {} });
+      return { ...r2, url: withKey, usedQueryKey:true };
+    }
+    async function fetchDirect(url, opts={}){
+      const res = await fetch(url, { ...opts, mode:'cors', redirect:'follow' });
+      const contentType = res.headers.get('content-type') || '';
+      const dispo       = res.headers.get('content-disposition') || '';
+      const status      = res.status;
+      if(!res.ok){
+        let details=''; try{ details = await res.text(); }catch{}
+        throw new Error(`HTTP ${status} at ${url} – ${details || res.statusText}`);
+      }
+      return { res, contentType, dispo, status, url };
+    }
+
+    // ---------- Artifact helpers ----------
+    function looksLikeHtml(s){ return typeof s==='string' && /<!DOCTYPE html|<html/i.test(s); }
+    function looksLikeBase64(s){
+      if (typeof s!=='string') return false;
+      if (/[<>{}]/.test(s)) return false;
+      const cleaned = s.replace(/\s+/g,'');
+      return cleaned.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(cleaned);
+    }
+    function base64ToBytes(b64){
+      const bin = atob(b64.replace(/\s+/g,''));
+      const len = bin.length; const bytes = new Uint8Array(len);
+      for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+
+    function pickArtifactFromStatus(js, desiredFormat){
+      const want = (desiredFormat||'').toLowerCase();
+      const byKeys = (obj) => {
+        if (!obj || typeof obj!=='object') return null;
+        const url = obj.download_url || obj.result_url || obj.url || obj.href || null;
+        const s3  = obj.s3_url || null;
+        const fmt = (obj.format || obj.type || obj.format_type || obj.content_type || '').toLowerCase();
+        const fn  = obj.filename || obj.name || '';
+        const ct  = obj.content_type || '';
+        const data = obj.data || obj.data_base64 || null;
+        const isB64 = !!obj.data_base64 || (!!data && !looksLikeHtml(data));
+        return { url, s3_url:s3, format:fmt, filename:fn, content_type:ct, data, is_base64:isB64 };
+      };
+
+      const deep = js?.result?.result ? byKeys(js.result.result) : null;
+      if (deep && (deep.data || deep.url || deep.s3_url)) return deep;
+
+      const mid = js?.result ? byKeys(js.result) : null;
+      if (mid && (mid.data || mid.url || mid.s3_url)) return mid;
+
+      if (Array.isArray(js?.files) && js.files.length){
+        const exact = js.files.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
+        return byKeys(exact || js.files[0]);
+      }
+      if (Array.isArray(js?.artifacts) && js.artifacts.length){
+        const exact = js.artifacts.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
+        return byKeys(exact || js.artifacts[0]);
+      }
+
+      if (js?.results && typeof js.results==='object'){
+        const keys = Object.keys(js.results);
+        const keyExact = keys.find(k => k.toLowerCase()===want);
+        const any = byKeys(js.results[keyExact || keys[0]]);
+        if (any) return any;
+      }
+
+      const single = byKeys(js.file || js);
+      if (single && (single.data || single.url || single.s3_url)) return single;
+      return null;
+    }
+
+    const preferredLink = (art) => art?.s3_url || art?.url || null;
+
+    async function downloadArtifactLink(link, suggestedName, format){
+      const accept = acceptFor(format);
+      const linkUrl = new URL(link, window.location.href);
+      const apiOrigin = new URL(apiBase, window.location.href).origin;
+      const isForeign = linkUrl.origin !== apiOrigin;
+
+      let resp;
+      if (isForeign){
+        resp = await fetchDirect(link, { headers:{ 'Accept': accept } });
+        log('GET', link);
+      } else {
+        resp = await apiFetchSmart(link, { headers:{ 'Accept': accept } }, { tryQueryKeyFallback:true });
+        log('GET', maskKeyInUrl(resp.url));
+      }
+
+      const filename = pickFilename(resp.dispo, suggestedName || 'report', format, resp.contentType);
+      const blob = await resp.res.blob();
+      fileDownload(blob, ensureExt(filename, format, resp.contentType));
+      setStatus(`Report ready → downloaded ${filename}.`,'ok');
+    }
+
+    async function downloadArtifactData(art, filenameFallback, format){
+      const filename = ensureExt(art.filename || filenameFallback, format, art.content_type || '');
+      const ct = art.content_type || (format==='html' ? 'text/html' : 'application/json');
+      const blob = art.is_base64 ? new Blob([base64ToBytes(art.data)], { type: ct }) : new Blob([art.data], { type: ct });
+      fileDownload(blob, filename);
+      setStatus(`Report ready → downloaded ${filename}.`,'ok');
+    }
+
+    function pickFilename(dispo, base, format, ct){
+      const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo||'');
+      if (m) return decodeURIComponent(m[1] || m[2]);
+      let ext = extFrom(format || ct || '');
+      return `${base}.${ext || 'dat'}`;
+    }
+
+    // ---------- Polling & download (uses final poll JSON; S3 first) ----------
+    async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
+      lastStartUrl = startUrl;
+      $("#btnRegenLast").disabled = false;
+      $("#lastStartUrl").textContent = `Last: ${ (new URL(buildUrl(startUrl))).toString().replace(/(api_key=)[^&]+/ig,'$1****') }`;
+
+      // Kickoff expects JSON (202 Accepted)
+      let start;
+      try {
+        start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } });
+      } catch (e) {
+        start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } }, { tryQueryKeyFallback: true });
+      }
+      log('GET', start.url.replace(/(api_key=)[^&]+/ig,'$1****'));
+
+      if (start.status === 200) {
+        return downloadFromResponse(start, filenameBase, format);
+      }
+      if (start.status !== 202) {
+        throw new Error(`Unexpected response: HTTP ${start.status}`);
+      }
+
+      const body = await start.res.json();
+      const taskId = body.task_id || body.id;
+      lastTaskId = taskId || lastTaskId;
+      if (lastTaskId){
+        $("#taskIdInput").value = lastTaskId;
+        $("#lastTaskIdText").textContent = `Last task: ${lastTaskId}`;
+      }
+      const statusPath = body.check_status_url || body.status_url || `/reports/status/${encodeURIComponent(taskId)}`;
+      const statusUrl  = buildUrl(statusPath);
+      log(`Task queued: ${taskId}. Polling status via ${statusUrl}…`);
+
+      // Poll until completed; USE the JSON from the completed poll
+      let completedJson = null;
+      while (true) {
+        await delay(3000);
+        const status = await apiFetchSmart(statusUrl, { headers:{ 'Accept':'application/json' } });
+        const js = await status.res.json();
+        const st = (js.status || js.result?.status || '').toLowerCase();
+        log(`status=${st || 'unknown'}`);
+        if (st === 'completed' || st === 'success' || st === 'done') { completedJson = js; break; }
+        if (st === 'failed' || st === 'error') throw new Error('Report generation failed.');
+      }
+
+      // Pick artifact from the completed poll; ALWAYS prefer s3_url
+      const art = pickArtifactFromStatus(completedJson, format);
+      if (art){
+        const link = preferredLink(art);
+        if (link){
+          await downloadArtifactLink(link, art.filename || `${filenameBase}.${extFrom(format)}`, format);
+          return;
+        }
+        if (art.data){
+          await downloadArtifactData(art, `${filenameBase}.${extFrom(format)}`, format);
+          return;
+        }
+      }
+
+      // Rare fallback: completed=true on the starter URL
+      const dlUrl = withParam(startUrl, 'completed', 'true');
+      const dl = await apiFetchSmart(dlUrl, { headers:{ 'Accept': acceptFor(format) } });
+      log('GET', dl.url.replace(/(api_key=)[^&]+/ig,'$1****'));
+      return downloadFromResponse(dl, filenameBase, format);
+    }
+
+    // ---------- Envelope-aware download (still prefers S3 if present) ----------
+    async function downloadFromResponse(resp, base, format){
+      const ct = resp.contentType || '';
+      if (ct.includes('application/json')){
+        const json = await resp.res.json();
+
+        const art = pickArtifactFromStatus(json, format);
+        if (art){
+          const link = preferredLink(art);
+          if (link){
+            await downloadArtifactLink(link, art.filename || `${base}.${extFrom(format)}`, format);
+            return;
+          }
+          if (art.data){
+            await downloadArtifactData(art, `${base}.${extFrom(format)}`, format);
+            return;
+          }
+        }
+
+        const followUrl = json.s3_url || json.download_url || json.result_url || json.url;
+        if (followUrl){
+          await downloadArtifactLink(followUrl, json.filename || `${base}.${extFrom(format)}`, format);
+          return;
+        }
+
+        const fname = json.filename && extFrom(json.filename).includes('json') ? json.filename : `${base}.json`;
+        const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
+        fileDownload(blob, fname);
+        setStatus(`Report saved as JSON (no file link/data present).`,'warn');
+        return;
+      }
+
+      // Non-JSON: actual file content
+      const filename = pickFilename(resp.dispo, base, format, ct);
+      const blob = await resp.res.blob();
+      fileDownload(blob, ensureExt(filename, format, ct));
+      setStatus(`Report ready → downloaded ${filename}.`,'ok');
+    }
+
+    // ---------- Data loaders ----------
+    async function loadConferences({preserveSelection=true}={}){
+      setStatus("Loading conferences…","warn");
+      try{
+        const prevConf = $("#conferenceSelect").value;
+        const {res, contentType, url} = await apiFetchSmart('/conferences', { headers:{ 'Accept':'application/json' } });
+        log('GET', url);
+        const data = contentType.includes('json') ? await res.json() : null;
+        const items = (data && (data.data||data.items||[])) || [];
+        const sel = $("#conferenceSelect");
+        sel.innerHTML = items.map(c => `<option value="${c.id}">${c.name} (${c.status || ''})</option>`).join('');
+        if(preserveSelection && prevConf){
+          const opt = $(`#conferenceSelect option[value="${prevConf}"]`);
+          if(opt) opt.selected = true;
+        }
+        setStatus(`Loaded ${items.length} conferences.`,"ok");
+        const chosen = $("#conferenceSelect").value || (items[0] && items[0].id) || '';
+        if(chosen){ await loadVendors(chosen, {keepSelection:true}); }
+      }catch(e){
+        console.error(e); setStatus(`Failed to load conferences: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    async function loadVendors(conferenceId, {keepSelection=false}={}){
+      const vendorSel = $("#vendorSelect");
+      const prev = new Set($$("#vendorSelect option:checked").map(o=>o.value));
+      vendorSel.innerHTML = `<option value="">— All vendors —</option>`;
+      $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
+      $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
+      if(!conferenceId) return;
+      setStatus("Loading vendors…","warn");
+      try{
+        const query = qs({ conference_id: conferenceId, limit: 100, offset: 0 });
+        const {res, contentType, url} = await apiFetchSmart(`/vendors?${query}`, { headers:{ 'Accept':'application/json' } });
+        log('GET', url);
+        const data = contentType.includes('json') ? await res.json() : null;
+        const items = (data && (data.data||[])) || [];
+        vendorSel.innerHTML = `<option value="">— All vendors —</option>` +
+          items.map(v => `<option value="${v.id}">${v.name}${v.booth_number?` · Booth ${v.booth_number}`:''}</option>`).join('');
+        if(keepSelection){
+          $$("#vendorSelect option").forEach(opt => { if(prev.has(opt.value)) opt.selected = true; });
+          const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
+          if(selected.length === 1){ await loadSessionsFromVendor(selected[0]); }
+        }
+        setStatus(`Loaded ${items.length} vendors.`,"ok");
+      }catch(e){
+        console.error(e); setStatus(`Failed to load vendors: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    async function loadSessionsFromVendor(vendorId){
+      $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
+      $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
+      if(!vendorId) return;
+      setStatus("Loading sessions from vendor history…","warn");
+      try{
+        const {res, contentType, url} = await apiFetchSmart(`/reports/vendor/${vendorId}?format=json`, { headers:{ 'Accept':'application/json' } });
+        log('GET', url);
+        const payload = contentType.includes('json') ? await res.json() : null;
+        const history = (payload && payload.data && (payload.data.interaction_history || payload.data.sessions || [])) || [];
+        const options = history.map((h, idx) => {
+          const dt = h.date || h.timestamp || h.start_time;
+          const dtLabel = dt ? new Date(dt).toLocaleString() : `Session ${idx+1}`;
+          const label = `${dtLabel} – ${h.summary || h.type || 'session'}${h.duration_minutes?` (${h.duration_minutes}m)`:''}`;
+          const sid = h.session_id || h.id || `${vendorId}-${idx}`;
+          return `<option value="${sid}">${label}</option>`;
+        }).join('');
+        $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>` + options;
+        $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>` + options;
+        setStatus(`Loaded ${history.length} sessions from vendor history.`,"ok");
+      }catch(e){
+        console.error(e); setStatus(`Failed to load sessions: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    // ---------- Generators ----------
+    async function generateConferenceReport(){
+      const confId = $("#conferenceSelect").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
+
+      const format = $("#formatConf").value;
+      const template = $("#templateConf").value || undefined;
+      const includeAttachments = $("#includeAttachments").checked ? true : undefined;
+      const background = $("#forceBgConf").checked ? true : undefined;
+
+      const params = { format, template, include_attachments: includeAttachments, background };
+      const url = `/reports/conference/${confId}?${qs(params)}`;
+      setStatus("Generating conference report…","warn");
+      try{
+        await runReportAndDownload({ startUrl: url, filenameBase: 'conference_report', format });
+      }catch(e){
+        console.error(e); setStatus(`Conference report failed: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    async function generateEndOfDayReport(){
+      const confId = $("#conferenceSelect").value;
+      const day = $("#eodDate").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
+      if(!day){ setStatus("Pick a day for the End-of-Day report.","err"); return; }
+
+      const format = $("#eodFormat").value;
+      const background = $("#forceBgEod").checked ? true : undefined;
+
+      const url = `/reports/day/${confId}/${day}?${qs({ format, background })}`;
+      setStatus("Generating End-of-Day report…","warn");
+      try{
+        await runReportAndDownload({ startUrl: url, filenameBase: `eod_report_${day}`, format });
+      }catch(e){
+        console.error(e); setStatus(`End-of-Day report failed: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    async function generateSessionReport(){
+      const sid = $("#sessionForReport").value || $("#sessionSelect").value;
+      if(!sid){ setStatus("Pick a session (select a vendor first to load sessions).","err"); return; }
+      const format = $("#sessionFormat").value;
+
+      setStatus("Generating session report…","warn");
+      try{
+        const url = `/reports/session/${sid}?${qs({ format })}`;
+        await runReportAndDownload({ startUrl: url, filenameBase: `session_${sid}`, format });
+      }catch(e){
+        console.error(e); setStatus(`Session report failed: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    async function generateVendorsReport(){
+      const confId = $("#conferenceSelect").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
+
+      const chosen = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
+      const format = $("#vendorFormat").value;
+
+      setStatus("Generating vendor(s) report…","warn");
+
+      try{
+        if(format === 'json' && chosen.length === 0){
+          const q = qs({ conference_id: confId, limit: 100, offset: 0 });
+          const {res, contentType, url} = await apiFetchSmart(`/vendors?${q}`, { headers:{ 'Accept':'application/json' } });
+          log('GET', url);
+          const data = contentType.includes('json') ? await res.json() : null;
+          const vendorIds = ((data && data.data) || []).map(v => v.id);
+
+          const results = [];
+          for(const id of vendorIds){
+            const r = await apiFetchSmart(`/reports/vendor/${id}?format=json`, { headers:{ 'Accept':'application/json' } });
+            log('GET', r.url);
+            const json = await r.res.json();
+            results.push(json);
+          }
+          const out = { generated_at: new Date().toISOString(), conference_id: confId, count: results.length, vendors: results };
+          const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
+          fileDownload(blob, `vendors_report_${confId}_bundle.json`);
+          setStatus(`Vendor(s) JSON bundle ready (${results.length}).`,"ok");
+          return;
+        }
+
+        const ids = chosen.length ? chosen : [];
+        if(ids.length === 0 && format !== 'json'){
+          setStatus('Select at least one vendor for non-JSON formats.','err'); return;
+        }
+
+        for(const id of ids){
+          const startUrl = `/reports/vendor/${id}?${qs({ format })}`;
+          await runReportAndDownload({ startUrl, filenameBase: `vendor_${id}`, format });
+        }
+      }catch(e){
+        console.error(e); setStatus(`Vendor(s) report failed: ${e.message}`,"err"); log(e.message);
+      }
+    }
+
+    // ---------- Advanced Workflows ----------
+    $("#btnRegenLast").addEventListener('click', async () => {
+      if(!lastStartUrl){ setStatus('No previous report URL yet.','err'); return; }
+      setStatus('Regenerating last report…','warn');
+      try{
+        const urlObj = new URL(buildUrl(lastStartUrl));
+        const path = urlObj.pathname;
+        const base =
+          path.includes('/conference/') ? 'conference_report' :
+          path.includes('/day/')        ? 'eod_report' :
+          path.includes('/session/')    ? 'session_report' :
+          path.includes('/vendor/')     ? 'vendor_report' : 'report';
+        const fmt = urlObj.searchParams.get('format') || 'json';
+        await runReportAndDownload({ startUrl: lastStartUrl, filenameBase: base, format: fmt });
+      }catch(e){
+        console.error(e); setStatus(`Regenerate failed: ${e.message}`,'err'); log(e.message);
+      }
+    });
+
+    $("#btnCheckTask").addEventListener('click', async () => {
+      const id = $("#taskIdInput").value.trim();
+      if(!id){ setStatus('Enter a task_id first.','err'); return; }
+      setStatus('Checking task status…','warn');
+      try{
+        const r = await apiFetchSmart(`/reports/status/${encodeURIComponent(id)}`, { headers:{ 'Accept':'application/json' } });
+        log('GET', r.url);
+        const js = await r.res.json();
+        log(JSON.stringify(js, null, 2));
+        const st = (js.status || js.result?.status || '').toLowerCase();
+        setStatus(`Task ${id} → ${st || 'unknown'}`,'ok');
+      }catch(e){
+        console.error(e); setStatus(`Check failed: ${e.message}`,'err'); log(e.message);
+      }
+    });
+
+    $("#btnDownloadTask").addEventListener('click', async () => {
+      const id = $("#taskIdInput").value.trim();
+      if(!id){ setStatus('Enter a task_id first.','err'); return; }
+      setStatus('Downloading by task…','warn');
+      try{
+        const r = await apiFetchSmart(`/reports/status/${encodeURIComponent(id)}`, { headers:{ 'Accept':'application/json' } });
+        const js = await r.res.json();
+        log(JSON.stringify(js, null, 2));
+
+        const preferFmt = js.result?.format_type || js.preferred_format || 'json';
+        const art = pickArtifactFromStatus(js, preferFmt) || pickArtifactFromStatus(js, null);
+        if (art){
+          const link = preferredLink(art);
+          if (link){ await downloadArtifactLink(link, art.filename || `report_${id}`, preferFmt); return; }
+          if (art.data){ await downloadArtifactData(art, art.filename || `report_${id}`, preferFmt); return; }
+        }
+        setStatus('No downloadable artifact in status; try re-running from the start button.','warn');
+      }catch(e){
+        console.error(e); setStatus(`Download failed: ${e.message}`,'err'); log(e.message);
+      }
+    });
+
+    // ---------- Button wiring ----------
+    async function withButtonsDisabled(fn){
+      const btns = $$("button"); btns.forEach(b=>b.disabled=true);
+      try { return await fn(); }
+      finally { btns.forEach(b=>b.disabled=false); }
+    }
+
+    $("#btnConfReport").addEventListener('click', () => withButtonsDisabled(() => generateConferenceReport()));
+    $("#btnEodReport").addEventListener('click', () => withButtonsDisabled(() => generateEndOfDayReport()));
+    $("#btnSessionReport").addEventListener('click', () => withButtonsDisabled(() => generateSessionReport()));
+    $("#btnVendorsReport").addEventListener('click', () => withButtonsDisabled(() => generateVendorsReport()));
+
+    $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
+    $("#vendorSelect").addEventListener('change', async (e) => {
+      const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+      if(selected.length === 1){ await loadSessionsFromVendor(selected[0]); }
+      else {
+        $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
+        $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
+      }
+    });
+
+    // Save & Refresh controls
+    $("#btnSaveRefresh").addEventListener('click', async () => {
+      saveCredsToLocalStorage();
+      apiBase = $("#baseUrl").value.trim() || apiBase;
+      apiKey  = $("#apiKey").value.trim()  || apiKey;
+      await refreshAll();
+    });
+    $("#btnRefresh").addEventListener('click', async () => { await refreshAll(); });
+    $("#btnClearCreds").addEventListener('click', () => {
+      clearCredsFromLocalStorage();
+      setStatus('Saved credentials cleared (localStorage). Current inputs still active for this session.','warn');
+    });
+
+    async function refreshAll(){
+      const start = Date.now();
+      setStatus('Refreshing data…','warn');
+      const prevConf = $("#conferenceSelect").value;
+      const prevVendorIds = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
+      const prevSession = $("#sessionSelect").value;
+
+      await loadConferences({preserveSelection:true});
+      if(prevConf && $("#conferenceSelect").value === prevConf){
+        if(prevVendorIds.length){
+          $$("#vendorSelect option").forEach(opt => { if(prevVendorIds.includes(opt.value)) opt.selected = true; });
+          if(prevVendorIds.length === 1){
+            await loadSessionsFromVendor(prevVendorIds[0]);
+            const opt = $(`#sessionSelect option[value="${prevSession}"]`);
+            if(opt) opt.selected = true;
+          }
+        }
+      }
+      const ts = new Date().toLocaleString();
+      $("#lastRefreshed").textContent = `Last refreshed: ${ts}`;
+      setStatus(`Refreshed in ${(Date.now()-start)}ms`,'ok');
+    }
+
+    // ---------- Kickoff ----------
+    loadCredsFromLocalStorage();
+    apiBase = $("#baseUrl").value.trim() || apiBase;
+    apiKey  = $("#apiKey").value.trim()  || apiKey;
+    refreshAll();
+  </script>
+</body>
+</html>
