@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Conference Buddy – Reports (PoC)</title>
+  <title>Conference Buddy – Reports (Production Workflow)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root{
@@ -22,7 +22,7 @@
     @media(min-width:980px){ .grid.cols-3{grid-template-columns:1.1fr 1fr 1fr} }
 
     label{display:block; font-size:12px; color:var(--muted); margin-bottom:6px}
-    input, select, button, .chips{width:100%}
+    input, select, button{width:100%}
     input, select{background:#0f141b; color:var(--text); border:1px solid rgba(255,255,255,.08); padding:10px 12px; border-radius:10px; outline:none}
     input::placeholder{color:#5e6b79}
     .row{display:grid; gap:12px; grid-template-columns:1fr}
@@ -37,9 +37,6 @@
     button.ghost{background:transparent; border-style:dashed}
     button:disabled{opacity:.55; cursor:not-allowed}
 
-    .tag{display:inline-flex; align-items:center; gap:8px; background:#0f141b; border:1px dashed rgba(255,255,255,.12); padding:6px 10px; border-radius:999px; font-size:12px}
-    .chips{display:flex; gap:8px; flex-wrap:wrap}
-
     .status{margin-top:12px; font-size:13px}
     .status span{padding:4px 8px; border-radius:999px}
     .ok{background:rgba(52,211,153,.12); color:var(--good)}
@@ -49,9 +46,8 @@
     .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; background:#0d1218; border:1px solid rgba(255,255,255,.08); padding:2px 6px; border-radius:6px}
     .divider{height:1px; background:linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent); margin:14px 0}
 
-    /* Bottom Output Panel */
     footer#outputBar{position:sticky; bottom:0; margin-top:16px}
-    #logPanel{max-height:240px; overflow:auto}
+    #logPanel{max-height:260px; overflow:auto}
     .row.actions{grid-template-columns: auto auto 1fr auto}
     @media(max-width:640px){ .row.actions{grid-template-columns:1fr 1fr} }
   </style>
@@ -61,9 +57,9 @@
     <header>
       <h1>🧭 Conference Buddy – Reports</h1>
       <div class="inline hint">
-        <span class="kbd">GET /api/conferences</span>
-        <span class="kbd">GET /api/vendors</span>
-        <span class="kbd">GET /api/reports/*</span>
+        <span class="kbd">/api/conferences</span>
+        <span class="kbd">/api/vendors</span>
+        <span class="kbd">/api/reports/*</span>
       </div>
     </header>
 
@@ -133,7 +129,7 @@
         <div class="row">
           <div>
             <label>Format</label>
-            <select id="format">
+            <select id="formatConf">
               <option value="html">html</option>
               <option value="pdf">pdf</option>
               <option value="json">json</option>
@@ -141,53 +137,29 @@
             </select>
           </div>
           <div>
-            <label>Detail Level (template)</label>
-            <select id="template">
+            <label>Template (optional)</label>
+            <select id="templateConf">
               <option value="">(default)</option>
               <option value="executive">executive</option>
               <option value="detailed">detailed</option>
               <option value="summary">summary</option>
-              <option value="vendor_focused">vendor_focused</option>
-              <option value="analytics_heavy">analytics_heavy</option>
             </select>
           </div>
         </div>
-
         <div class="row">
-          <div>
-            <label>Date Range</label>
-            <select id="dateRange">
-              <option value="all">all</option>
-              <option value="today">today</option>
-              <option value="yesterday">yesterday</option>
-              <option value="this_week">this_week</option>
-              <option value="custom">custom</option>
-            </select>
-          </div>
           <div class="inline" style="gap:8px; align-items:end">
             <div style="flex:1">
               <label for="includeAttachments">Include attachments in ZIP</label>
               <input id="includeAttachments" type="checkbox" />
             </div>
           </div>
-        </div>
-
-        <div class="row" id="customDates" style="display:none">
-          <div><label>Start</label><input type="date" id="customStart"></div>
-          <div><label>End</label><input type="date" id="customEnd"></div>
-        </div>
-
-        <div style="margin-top:8px">
-          <label>Include Sections</label>
-          <div class="chips" id="sections">
-            <button class="tag" data-section="overview" type="button">overview</button>
-            <button class="tag" data-section="vendors" type="button">vendors</button>
-            <button class="tag" data-section="sessions" type="button">sessions</button>
-            <button class="tag" data-section="analytics" type="button">analytics</button>
-            <button class="tag" data-section="recommendations" type="button">recommendations</button>
+          <div class="inline" style="gap:8px; align-items:end">
+            <div style="flex:1">
+              <label for="forceBgConf">Force background</label>
+              <input id="forceBgConf" type="checkbox" />
+            </div>
           </div>
         </div>
-
         <div class="divider"></div>
         <div class="btnbar">
           <button id="btnConfReport">Generate Conference Report</button>
@@ -213,26 +185,15 @@
           </div>
         </div>
         <div class="row">
-          <div>
-            <label>Detail Level (template)</label>
-            <select id="eodTemplate">
-              <option value="executive">executive</option>
-              <option value="summary">summary</option>
-              <option value="detailed">detailed</option>
-              <option value="vendor_focused">vendor_focused</option>
-              <option value="analytics_heavy">analytics_heavy</option>
-            </select>
+          <div class="inline" style="gap:8px; align-items:end">
+            <div style="flex:1">
+              <label for="forceBgEod">Force background</label>
+              <input id="forceBgEod" type="checkbox" />
+            </div>
           </div>
-          <div>
-            <label>Vendor Filter</label>
-            <select id="eodVendorFilter">
-              <option value="all">all</option>
-              <option value="visited">visited</option>
-              <option value="unvisited">unvisited</option>
-              <option value="high_priority">high_priority</option>
-            </select>
-          </div>
+          <div></div>
         </div>
+        <div class="tiny">Uses <span class="kbd">/api/reports/day/:conference_id/:date</span>.</div>
         <div class="divider"></div>
         <div class="btnbar">
           <button id="btnEodReport">Generate End-of-Day Report</button>
@@ -245,14 +206,15 @@
 
         <div class="row">
           <div>
-            <label>Session Report (JSON)</label>
+            <label>Session Report</label>
             <select id="sessionForReport"><option value="">— choose from Sessions dropdown above —</option></select>
           </div>
           <div>
-            <label>Session Detail Level</label>
-            <select id="sessionDetail">
-              <option value="detailed">detailed</option>
-              <option value="summary">summary</option>
+            <label>Session Format</label>
+            <select id="sessionFormat">
+              <option value="json">json</option>
+              <option value="pdf">pdf</option>
+              <option value="html">html</option>
             </select>
           </div>
         </div>
@@ -261,14 +223,16 @@
 
         <div class="row">
           <div>
-            <label>Vendor(s) Report (JSON)</label>
-            <div class="tiny">Select one or more vendors above — or none for <b>all</b> vendors in the conference.</div>
+            <label>Vendor(s) Report</label>
+            <div class="tiny">Select one or more vendors above — none = all vendors (JSON bundle).</div>
           </div>
           <div>
-            <label>Vendor Detail Level</label>
-            <select id="vendorsDetail">
-              <option value="detailed">detailed</option>
-              <option value="summary">summary</option>
+            <label>Vendor Format</label>
+            <select id="vendorFormat">
+              <option value="json">json (bundle if multiple)</option>
+              <option value="pdf">pdf (per vendor)</option>
+              <option value="html">html (per vendor)</option>
+              <option value="zip">zip (per vendor)</option>
             </select>
           </div>
         </div>
@@ -304,9 +268,10 @@
     };
     const setStatus = (text, type="ok") => { $("#status").innerHTML = text ? `<span class="${type}">${text}</span>` : ""; };
 
+    // Serializer (supports arrays with [])
     const qs = (obj) => {
       const parts = [];
-      for (const [k,v] of Object.entries(obj)) {
+      for (const [k,v] of Object.entries(obj||{})) {
         if (v===undefined || v===null || v==="") continue;
         if (Array.isArray(v)) v.forEach(x => parts.push(`${encodeURIComponent(k)}[]=${encodeURIComponent(x)}`));
         else parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
@@ -360,11 +325,10 @@
     $("#baseUrl").value = DEFAULT_BASE;
     $("#apiKey").value  = DEFAULT_KEY;
 
-    // reflect inputs into state
     $("#baseUrl").addEventListener('input', e => apiBase = e.target.value.trim() || DEFAULT_BASE);
-    $("#apiKey").addEventListener('input', e => apiKey  = e.target.value.trim()  || DEFAULT_KEY);
+    $("#apiKey").addEventListener('input',  e => apiKey  = e.target.value.trim()  || DEFAULT_KEY);
 
-    // Save on Enter (API key field)
+    // Save on Enter in API key field
     $("#apiKey").addEventListener('keydown', (e) => {
       if(e.key === 'Enter'){
         e.preventDefault();
@@ -379,39 +343,105 @@
     async function rawFetch(url, opts={}){
       const res = await fetch(url, { ...opts, mode: 'cors', redirect: 'follow' });
       const contentType = res.headers.get('content-type') || '';
+      const dispo = res.headers.get('content-disposition') || '';
+      const status = res.status;
       if(!res.ok){
         let details = '';
         try { details = await res.text(); } catch {}
-        throw new Error(`HTTP ${res.status} at ${url} – ${details || res.statusText}`);
+        throw new Error(`HTTP ${status} at ${url} – ${details || res.statusText}`);
       }
-      return { res, contentType };
+      return { res, contentType, dispo, status };
     }
-    async function apiFetchSmart(path, opts={}, { tryQueryKeyFallback = true, attempts = 2 } = {}){
+    async function apiFetchSmart(path, opts={}, { tryQueryKeyFallback = true } = {}){
       const base = path.startsWith('http') ? path : `${apiBase}${path}`;
-      const headers = {
-        'X-API-Key': apiKey,
-        'Accept': 'application/json, text/html, application/pdf, application/zip;q=0.9,*/*;q=0.8',
-        ...(opts.headers||{})
-      };
+      const headers = { 'X-API-Key': apiKey, ...(opts.headers||{}) };
       try {
-        const { res, contentType } = await rawFetch(base, { ...opts, headers });
-        return { res, contentType, url: base };
+        const r = await rawFetch(base, { ...opts, headers });
+        return { ...r, url: base, usedQueryKey:false };
       } catch (err) {
         if (!tryQueryKeyFallback || !isLikelyCorsOrNetwork(err)) throw err;
         log('⚠️ Header-auth failed (likely CORS). Retrying with api_key in query…');
       }
-      const [urlNoQuery, q = ''] = base.split('?');
-      const sep = q ? '&' : '?';
+      const [urlNoQuery, q=''] = base.split('?'); const sep = q ? '&' : '?';
       const withKey = `${urlNoQuery}${q ? '?'+q : ''}${sep}api_key=${encodeURIComponent(apiKey)}`;
-      for (let i=0;i<attempts;i++){
-        try{
-          const { res, contentType } = await rawFetch(withKey, { ...opts, headers: { 'Accept': 'application/json, text/html, application/pdf, application/zip;q=0.9,*/*;q=0.8' } });
-          return { res, contentType, url: withKey, usedQueryKey: true };
-        }catch(err){
-          if(i < attempts-1){ await delay(400 * (i+1)); continue; }
-          throw new Error(`${String(err.message||err)} (after query-key fallback)`);
-        }
+      const r2 = await rawFetch(withKey, { ...opts, headers: {} });
+      return { ...r2, url: withKey, usedQueryKey:true };
+    }
+
+    // ---------- Polling workflow (202 -> /status -> completed=true) ----------
+    async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
+      // 1) Kick off generation (or direct JSON)
+      let start;
+      try {
+        start = await apiFetchSmart(startUrl);
+      } catch (e) {
+        // Some proxies reject header on first call; retry with URL key if we didn't already
+        start = await apiFetchSmart(startUrl, {}, { tryQueryKeyFallback: true });
       }
+
+      log('GET', maskKeyInUrl(start.url));
+
+      if (start.status === 200) {
+        // JSON direct or occasionally direct file
+        return downloadFromResponse(start, filenameBase, format);
+      }
+
+      if (start.status === 202) {
+        const body = await start.res.json();
+        const taskId = body.task_id;
+        const statusPath = body.check_status_url || `/api/reports/status/${taskId}`;
+        const statusUrl = statusPath.startsWith('http') ? statusPath : `${apiBase}${statusPath}`;
+        log(`Task queued: ${taskId}. Polling status…`);
+
+        // 2) Poll until completed/failed
+        while (true) {
+          await delay(3000);
+          const status = await apiFetchSmart(statusPath);
+          const js = await status.res.json();
+          log(`status=${js.status}`);
+          if (js.status === 'completed') break;
+          if (js.status === 'failed') throw new Error('Report generation failed.');
+        }
+
+        // 3) Download with completed=true
+        const dlSep = startUrl.includes('?') ? '&' : '?';
+        const dlUrl = `${startUrl}${dlSep}completed=true`;
+        const dl = await apiFetchSmart(dlUrl);
+        log('GET', maskKeyInUrl(dl.url));
+        return downloadFromResponse(dl, filenameBase, format);
+      }
+
+      throw new Error(`Unexpected response: HTTP ${start.status}`);
+    }
+
+    async function downloadFromResponse(resp, base, format){
+      // Prefer Content-Disposition filename when present
+      const filename = pickFilename(resp.dispo, base, format, resp.contentType);
+      if ((resp.contentType||'').includes('application/json')) {
+        const json = await resp.res.json();
+        const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
+        fileDownload(blob, filename.endsWith('.json') ? filename : `${base}.json`);
+        setStatus(`Report ready → downloaded ${filename}.`,'ok');
+      } else {
+        const blob = await resp.res.blob();
+        fileDownload(blob, filename);
+        setStatus(`Report ready → downloaded ${filename}.`,'ok');
+      }
+    }
+
+    function pickFilename(dispo, base, format, ct){
+      // Try Content-Disposition
+      const m = /filename\\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo||'');
+      if (m) return decodeURIComponent(m[1] || m[2]);
+      // Else infer from content-type / requested format
+      let ext = format;
+      if (ct) {
+        if (ct.includes('pdf')) ext='pdf';
+        else if (ct.includes('zip')) ext='zip';
+        else if (ct.includes('html')) ext='html';
+        else if (ct.includes('json')) ext='json';
+      }
+      return `${base}.${ext || 'dat'}`;
     }
 
     // ---------- Loaders ----------
@@ -470,7 +500,7 @@
       if(!vendorId) return;
       setStatus("Loading sessions from vendor history…","warn");
       try{
-        const {res, contentType, url} = await apiFetchSmart(`/reports/vendor/${vendorId}?include=interaction_history`);
+        const {res, contentType, url} = await apiFetchSmart(`/reports/vendor/${vendorId}?format=json`);
         log('GET', url);
         const payload = contentType.includes('json') ? await res.json() : null;
         const history = (payload && payload.data && (payload.data.interaction_history || payload.data.sessions || [])) || [];
@@ -490,114 +520,52 @@
     }
 
     // ---------- Report Generators ----------
-    async function handleReportDownload(res, contentType, baseName){
-      if((contentType||'').includes('application/json')){
-        const json = await res.json();
-        log(JSON.stringify(json,null,2));
-        if(json.s3_url){
-          const fname = json.filename || `${baseName}.json`;
-          const s3 = await fetch(json.s3_url);
-          if(!s3.ok) throw new Error(`S3 download failed: ${s3.status} ${await s3.text().catch(()=>s3.statusText)}`);
-          const blob = await s3.blob();
-          fileDownload(blob, fname);
-        }else{
-          const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
-          const fname = json.filename || `${baseName}.json`;
-          fileDownload(blob, fname);
-        }
-      } else {
-        const blob = await res.blob();
-        const ext = contentType.includes('pdf')?'pdf':(contentType.includes('zip')?'zip':(contentType.includes('html')?'html':'dat'));
-        const fname = `${baseName}.${ext}`;
-        fileDownload(blob, fname);
-      }
-    }
-
     async function generateConferenceReport(){
       const confId = $("#conferenceSelect").value;
       if(!confId){ setStatus("Select a conference first.","err"); return; }
 
-      const format = $("#format").value;
-      const dateRange = $("#dateRange").value;
-      const customStart = $("#customStart")?.value;
-      const customEnd   = $("#customEnd")?.value;
-      const vendorFilter = $("#vendorFilter").value || 'all';
-      const includeAttachments = $("#includeAttachments")?.checked;
-      const template = $("#template")?.value || undefined;
-      const sections = $$("#sections .tag.active").map(b => b.dataset.section);
+      const format = $("#formatConf").value;
+      const template = $("#templateConf").value || undefined;
+      const includeAttachments = $("#includeAttachments").checked ? true : undefined;
+      const background = $("#forceBgConf").checked ? true : undefined;
 
-      const queryObj = { format, vendor_filter: vendorFilter, date_range: dateRange };
-      if (template) queryObj.template = template;
-      if (sections.length) queryObj['include_sections'] = sections;
-      if (includeAttachments) queryObj['include_attachments'] = true;
-      if (dateRange === 'custom'){
-        if (customStart) queryObj['custom_start'] = customStart;
-        if (customEnd)   queryObj['custom_end']   = customEnd;
-      }
-      const queryString = qs(queryObj);
-
+      const params = { format, template, include_attachments: includeAttachments, background };
+      const url = `/reports/conference/${confId}?${qs(params)}`;
       setStatus("Generating conference report…","warn");
       try{
-        const {res, contentType, url, usedQueryKey} = await apiFetchSmart(`/reports/conference/${confId}?${queryString}`, {}, { tryQueryKeyFallback: true, attempts: 2 });
-        log('GET', maskKeyInUrl(url));
-        if (usedQueryKey) log('ℹ️ Used api_key in URL to avoid preflight.');
-        await handleReportDownload(res, contentType, `conference_report`);
-        setStatus(`Report ready.`,"ok");
+        await runReportAndDownload({ startUrl: url, filenameBase: 'conference_report', format });
       }catch(e){
-        console.error(e);
-        setStatus(`Conference report failed: ${e.message}`,"err"); log(e.message);
+        console.error(e); setStatus(`Conference report failed: ${e.message}`,"err"); log(e.message);
       }
     }
 
     async function generateEndOfDayReport(){
       const confId = $("#conferenceSelect").value;
-      if(!confId){ setStatus("Select a conference first.","err"); return; }
       const day = $("#eodDate").value;
+      if(!confId){ setStatus("Select a conference first.","err"); return; }
       if(!day){ setStatus("Pick a day for the End-of-Day report.","err"); return; }
 
       const format = $("#eodFormat").value;
-      const vendorFilter = $("#eodVendorFilter").value || 'all';
-      const template = $("#eodTemplate").value || undefined;
-      const sections = ['overview','vendors','sessions','analytics','recommendations'];
+      const background = $("#forceBgEod").checked ? true : undefined;
 
-      const queryObj = {
-        format,
-        vendor_filter: vendorFilter,
-        date_range: 'custom',
-        custom_start: day,
-        custom_end: day,
-        include_sections: sections
-      };
-      if(template) queryObj.template = template;
-
-      const qsStr = qs(queryObj);
+      const url = `/reports/day/${confId}/${day}?${qs({ format, background })}`;
       setStatus("Generating End-of-Day report…","warn");
       try{
-        const {res, contentType, url, usedQueryKey} = await apiFetchSmart(`/reports/conference/${confId}?${qsStr}`, {}, { tryQueryKeyFallback: true, attempts: 2 });
-        log('GET', maskKeyInUrl(url));
-        if (usedQueryKey) log('ℹ️ Used api_key in URL to avoid preflight.');
-        await handleReportDownload(res, contentType, `eod_report_${day}`);
-        setStatus(`End-of-Day report ready.`,"ok");
+        await runReportAndDownload({ startUrl: url, filenameBase: `eod_report_${day}`, format });
       }catch(e){
-        console.error(e);
-        setStatus(`End-of-Day report failed: ${e.message}`,"err"); log(e.message);
+        console.error(e); setStatus(`End-of-Day report failed: ${e.message}`,"err"); log(e.message);
       }
     }
 
     async function generateSessionReport(){
       const sid = $("#sessionForReport").value || $("#sessionSelect").value;
       if(!sid){ setStatus("Pick a session (select a vendor first to load sessions).","err"); return; }
-      const level = $("#sessionDetail").value || 'detailed';
+      const format = $("#sessionFormat").value;
 
-      setStatus("Generating session report (JSON)…","warn");
+      setStatus("Generating session report…","warn");
       try{
-        const {res, contentType, url} = await apiFetchSmart(`/sessions/${sid}`);
-        log('GET', url);
-        const json = contentType.includes('json') ? await res.json() : { raw: await res.text() };
-        const out = (level === 'summary') ? summarizeSession(json) : json;
-        const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
-        fileDownload(blob, `session_${sid}_${level}.json`);
-        setStatus(`Session report ready.`,"ok");
+        const url = `/reports/session/${sid}?${qs({ format })}`;
+        await runReportAndDownload({ startUrl: url, filenameBase: `session_${sid}`, format });
       }catch(e){
         console.error(e); setStatus(`Session report failed: ${e.message}`,"err"); log(e.message);
       }
@@ -607,78 +575,48 @@
       const confId = $("#conferenceSelect").value;
       if(!confId){ setStatus("Select a conference first.","err"); return; }
 
-      const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
-      const level = $("#vendorsDetail").value || 'detailed';
+      const chosen = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
+      const format = $("#vendorFormat").value;
+
       setStatus("Generating vendor(s) report…","warn");
 
-      await withButtonsDisabled(async () => {
-        try{
-          let vendorIds = selected;
-          if(vendorIds.length === 0){
-            const q = qs({ conference_id: confId, limit: 100, offset: 0 });
-            const {res, contentType, url} = await apiFetchSmart(`/vendors?${q}`);
-            log('GET', url);
-            const data = contentType.includes('json') ? await res.json() : null;
-            vendorIds = ((data && data.data) || []).map(v => v.id);
-          }
+      try{
+        // If JSON and none selected, bundle all vendors for the conference (JSON)
+        if(format === 'json' && chosen.length === 0){
+          const q = qs({ conference_id: confId, limit: 100, offset: 0 });
+          const {res, contentType, url} = await apiFetchSmart(`/vendors?${q}`);
+          log('GET', url);
+          const data = contentType.includes('json') ? await res.json() : null;
+          const vendorIds = ((data && data.data) || []).map(v => v.id);
 
           const results = [];
           for(const id of vendorIds){
-            const {res, contentType, url} = await apiFetchSmart(`/reports/vendor/${id}`);
-            log('GET', url);
-            const json = contentType.includes('json') ? await res.json() : { raw: await res.text() };
-            results.push(level==='summary' ? summarizeVendor(json) : json);
+            const url = `/reports/vendor/${id}?format=json`;
+            const r = await apiFetchSmart(url);
+            log('GET', r.url);
+            const json = await r.res.json();
+            results.push(json);
           }
-
           const out = { generated_at: new Date().toISOString(), conference_id: confId, count: results.length, vendors: results };
           const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
-          fileDownload(blob, `vendors_report_${confId}_${level}.json`);
-          setStatus(`Vendor(s) report ready (${results.length}).`,"ok");
-        }catch(e){
-          console.error(e); setStatus(`Vendor(s) report failed: ${e.message}`,"err"); log(e.message);
+          fileDownload(blob, `vendors_report_${confId}_bundle.json`);
+          setStatus(`Vendor(s) JSON bundle ready (${results.length}).`,"ok");
+          return;
         }
-      });
-    }
 
-    // ---------- Summarizers ----------
-    function summarizeVendor(payload){
-      try{
-        const v = payload?.data?.vendor || {};
-        const hist = payload?.data?.interaction_history || [];
-        return {
-          vendor: {
-            id: v.id, name: v.name, booth_number: v.booth_number,
-            priority_score: v.relationship_status?.priority_score ?? v.priority_score,
-            is_visited: v.relationship_status?.is_visited ?? v.is_visited,
-            last_interaction: v.relationship_status?.last_interaction ?? v.last_interaction
-          },
-          interaction_summary: hist.slice(0,10).map(h => ({
-            session_id: h.session_id || h.id,
-            date: h.date,
-            duration_minutes: h.duration_minutes,
-            type: h.type,
-            summary: h.summary,
-            sentiment: h.sentiment,
-            action_items: h.action_items
-          }))
-        };
-      }catch{ return payload; }
-    }
-    function summarizeSession(payload){
-      try{
-        const d = payload?.data || payload;
-        return {
-          id: d.id || d.session_id,
-          vendor_name: d.vendor_name,
-          conference_name: d.conference_name,
-          start_time: d.start_time, end_time: d.end_time,
-          summary: d.summary,
-          key_topics: d.key_topics,
-          sentiment: d.sentiment,
-          action_items: d.action_items,
-          user_rating: d.user_rating
-        };
-      }catch{ return payload; }
+        // Otherwise: for selected vendors, download each per new workflow
+        const ids = chosen.length ? chosen : (format==='json' ? [] : []); // non-JSON with none selected does nothing
+        if(ids.length === 0 && format !== 'json'){
+          setStatus('Select at least one vendor for non-JSON formats.','err'); return;
+        }
+
+        for(const id of ids){
+          const startUrl = `/reports/vendor/${id}?${qs({ format })}`;
+          await runReportAndDownload({ startUrl, filenameBase: `vendor_${id}`, format });
+        }
+      }catch(e){
+        console.error(e); setStatus(`Vendor(s) report failed: ${e.message}`,"err"); log(e.message);
+      }
     }
 
     // ---------- Button wiring ----------
@@ -707,32 +645,21 @@
       apiKey  = $("#apiKey").value.trim()  || apiKey;
       await refreshAll();
     });
-
-    // Manual Refresh
-    $("#btnRefresh").addEventListener('click', async () => {
-      await refreshAll();
-    });
-
-    // Clear saved creds
+    $("#btnRefresh").addEventListener('click', async () => { await refreshAll(); });
     $("#btnClearCreds").addEventListener('click', () => {
       clearCredsFromLocalStorage();
-      // keep current input values in memory, but inform user
       setStatus('Saved credentials cleared (localStorage). Current inputs still active for this session.','warn');
     });
 
     async function refreshAll(){
       const start = Date.now();
       setStatus('Refreshing data…','warn');
-      // remember selections to preserve across refresh
       const prevConf = $("#conferenceSelect").value;
       const prevVendorIds = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
       const prevSession = $("#sessionSelect").value;
 
       await loadConferences({preserveSelection:true});
-      if(prevConf && $("#conferenceSelect").value !== prevConf){
-        // If previous conference no longer exists, vendors/sessions already reloaded for new conf.
-      }else{
-        // restore vendor selections and sessions if possible
+      if(prevConf && $("#conferenceSelect").value === prevConf){
         if(prevVendorIds.length){
           $$("#vendorSelect option").forEach(opt => { if(prevVendorIds.includes(opt.value)) opt.selected = true; });
           if(prevVendorIds.length === 1){
@@ -748,22 +675,10 @@
     }
 
     // ---------- Kickoff ----------
-    // Load any saved creds, then initial data
     loadCredsFromLocalStorage();
-    // reflect possibly loaded creds into state
     apiBase = $("#baseUrl").value.trim() || apiBase;
     apiKey  = $("#apiKey").value.trim()  || apiKey;
     refreshAll();
-
-    // UI tweaks
-    $("#dateRange").addEventListener('change', e => {
-      $("#customDates").style.display = e.target.value === 'custom' ? '' : 'none';
-    });
-    $("#sections").addEventListener('click', (e) => {
-      const btn = e.target.closest('button.tag'); if(!btn) return;
-      btn.classList.toggle('active');
-      btn.style.borderStyle = btn.classList.contains('active') ? 'solid' : 'dashed';
-    });
   </script>
 </body>
 </html>
