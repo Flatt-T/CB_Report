@@ -257,7 +257,7 @@
           <div class="tiny" id="lastTaskIdText">Last task: —</div>
         </div>
       </div>
-      <div class="tiny">On completion, we fetch artifacts from <span class="kbd">/api/reports/status/:task_id</span> and download the file (data, direct URL, or S3).</div>
+      <div class="tiny">On completion, we fetch artifacts from <span class="kbd">/api/reports/status/:task_id</span> and download the file (data for HTML/JSON; server/S3 for PDF/ZIP).</div>
     </section>
 
     <!-- Bottom Output -->
@@ -460,7 +460,13 @@
       return bytes;
     }
 
-    // Return a normalized "artifact" if present: { filename, content_type, data, is_base64, url }
+    // prefer links (server/S3) for non-HTML/JSON
+    function preferLinksForFormat(fmt){
+      const f = (fmt||'').toLowerCase();
+      return !(f==='html' || f==='json');
+    }
+
+    // Return a normalized "artifact" if present: { filename, content_type, data, is_base64, url, format }
     function pickArtifactFromStatus(js, desiredFormat){
       const want = (desiredFormat||'').toLowerCase();
       const byKeys = (obj) => {
@@ -477,14 +483,9 @@
 
       // Prefer nested "result.result"
       const deep = js?.result?.result ? byKeys(js.result.result) : null;
-      if (deep && (deep.data || deep.url || deep.s3_url)) {
-        // ensure filename fallback
-        if (!deep.filename && js?.result?.result?.filename) deep.filename = js.result.result.filename;
-        if (!deep.content_type && js?.result?.result?.content_type) deep.content_type = js.result.result.content_type;
-        return deep;
-      }
+      if (deep && (deep.data || deep.url || deep.s3_url)) return deep;
 
-      // Next try js.result (sometimes contains direct fields)
+      // Next try js.result
       const mid = js?.result ? byKeys(js.result) : null;
       if (mid && (mid.data || mid.url || mid.s3_url)) return mid;
 
@@ -506,7 +507,7 @@
         if (any) return any;
       }
 
-      // Flattened single
+      // Single flattened
       const single = byKeys(js.file || js);
       if (single && (single.data || single.url || single.s3_url)) return single;
 
@@ -521,6 +522,7 @@
 
       let resp;
       if (isForeign){
+        // Presigned S3 (no auth headers)
         resp = await fetchDirect(link, { headers:{ 'Accept': accept } });
         log('GET', link);
       } else {
@@ -536,18 +538,23 @@
 
     async function downloadArtifactData(art, filenameFallback, format){
       const filename = ensureExt(art.filename || filenameFallback, format, art.content_type || '');
-      const ct = art.content_type || (format==='html' ? 'text/html' : (format==='pdf' ? 'application/pdf' : (format==='zip' ? 'application/zip' : 'application/octet-stream')));
+      const targetFmt = (format || '').toLowerCase();
 
-      if (art.is_base64){
-        const bytes = base64ToBytes(art.data);
-        const blob = new Blob([bytes], { type: ct });
-        fileDownload(blob, filename);
-        setStatus(`Report ready → downloaded ${filename}.`,'ok');
+      // Only use inline data by default for HTML/JSON; for others we prefer links
+      if (preferLinksForFormat(targetFmt)){
+        // Fallback only if no link exists
+        if (!(art.url || art.s3_url)) {
+          const ct = art.content_type || (targetFmt==='pdf' ? 'application/pdf' : (targetFmt==='zip' ? 'application/zip' : 'application/octet-stream'));
+          const blob = art.is_base64 ? new Blob([base64ToBytes(art.data)], { type: ct }) : new Blob([art.data], { type: ct });
+          fileDownload(blob, filename);
+          setStatus(`Report ready → downloaded ${filename}.`,'ok');
+        }
         return;
       }
 
-      // treat as text
-      const blob = new Blob([art.data], { type: ct || 'text/plain' });
+      // HTML/JSON path: use inline data directly
+      const ct = art.content_type || (targetFmt==='html' ? 'text/html' : 'application/json');
+      const blob = art.is_base64 ? new Blob([base64ToBytes(art.data)], { type: ct }) : new Blob([art.data], { type: ct });
       fileDownload(blob, filename);
       setStatus(`Report ready → downloaded ${filename}.`,'ok');
     }
@@ -601,13 +608,20 @@
         const art = pickArtifactFromStatus(statusJson, format);
 
         if (art){
+          // Prefer server/S3 for non-HTML/JSON formats
+          if (preferLinksForFormat(format) && (art.url || art.s3_url)){
+            const link = art.url || art.s3_url;
+            await downloadArtifactLink(link, art.filename || `${filenameBase}.${extFrom(format)}`, format);
+            return;
+          }
+          // HTML/JSON: inline data if present
           if (art.data){
             await downloadArtifactData(art, `${filenameBase}.${extFrom(format)}`, format);
             return;
           }
+          // Otherwise try link (works for all formats if provided)
           if (art.url || art.s3_url){
-            const link = art.url || art.s3_url;
-            await downloadArtifactLink(link, art.filename || `${filenameBase}.${extFrom(format)}`, format);
+            await downloadArtifactLink(art.url || art.s3_url, art.filename || `${filenameBase}.${extFrom(format)}`, format);
             return;
           }
         }
@@ -628,10 +642,14 @@
       if (ct.includes('application/json')){
         const json = await resp.res.json();
 
-        // Try nested artifact first (same logic as by task id)
+        // Try nested artifact first
         const art = pickArtifactFromStatus(json, format);
         if (art){
-          if (art.data){
+          if (preferLinksForFormat(format) && (art.url || art.s3_url)){
+            await downloadArtifactLink(art.url || art.s3_url, art.filename || `${base}.${extFrom(format)}`, format);
+            return;
+          }
+          if (!preferLinksForFormat(format) && art.data){
             await downloadArtifactData(art, `${base}.${extFrom(format)}`, format);
             return;
           }
@@ -641,7 +659,7 @@
           }
         }
 
-        // Basic URL fields at top-level
+        // Basic top-level URL fields
         const followUrl = json.download_url || json.result_url || json.url;
         if (followUrl){
           await downloadArtifactLink(followUrl, json.filename || `${base}.${extFrom(format)}`, format);
@@ -896,10 +914,12 @@
         const js = await r.res.json();
         log(JSON.stringify(js, null, 2));
 
-        const art = pickArtifactFromStatus(js, js.result?.format_type || js.preferred_format || 'json') || pickArtifactFromStatus(js, null);
+        const preferFmt = js.result?.format_type || js.preferred_format || 'json';
+        const art = pickArtifactFromStatus(js, preferFmt) || pickArtifactFromStatus(js, null);
         if (art){
-          if (art.data){ await downloadArtifactData(art, art.filename || `report_${id}`, art.format || 'json'); return; }
-          if (art.url || art.s3_url){ await downloadArtifactLink(art.url || art.s3_url, art.filename || `report_${id}`, art.format || 'json'); return; }
+          if (preferLinksForFormat(preferFmt) && (art.url || art.s3_url)){ await downloadArtifactLink(art.url || art.s3_url, art.filename || `report_${id}`, preferFmt); return; }
+          if (!preferLinksForFormat(preferFmt) && art.data){ await downloadArtifactData(art, art.filename || `report_${id}`, preferFmt); return; }
+          if (art.url || art.s3_url){ await downloadArtifactLink(art.url || art.s3_url, art.filename || `report_${id}`, preferFmt); return; }
         }
         setStatus('No downloadable artifact in status; try re-running from the start button.','warn');
       }catch(e){
@@ -921,7 +941,7 @@
 
     $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
     $("#vendorSelect").addEventListener('change', e => {
-      const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+      const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
       if(selected.length === 1){ loadSessionsFromVendor(selected[0]); }
       else { $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`; $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`; }
     });
