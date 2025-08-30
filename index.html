@@ -274,524 +274,116 @@
   <span class="sr" aria-live="polite" id="live" style="position:absolute;left:-9999px"></span>
 
   <script>
-    // ---------- Helpers ----------
-    const $  = sel => document.querySelector(sel);
-    const $$ = sel => Array.from(document.querySelectorAll(sel));
-    const live = (text) => { $("#live").textContent = text; };
-    const log = (...args) => {
-      const msg = args.map(a => (typeof a==='string'? a : JSON.stringify(a,null,2))).join(' ');
-      const el=$("#log"); el.textContent += (msg + "\\n"); el.scrollTop = el.scrollHeight; live(msg);
-    };
-    const setStatus = (text, type="ok") => { $("#status").innerHTML = text ? `<span class="${type}">${text}</span>` : ""; };
-
-    // Serializer (supports arrays with [])
-    const qs = (obj) => {
-      const parts = [];
-      for (const [k,v] of Object.entries(obj||{})) {
-        if (v===undefined || v===null || v==="") continue;
-        if (Array.isArray(v)) v.forEach(x => parts.push(`${encodeURIComponent(k)}[]=${encodeURIComponent(x)}`));
-        else parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
-      }
-      return parts.join('&');
-    };
-
-    const fileDownload = (blob, filename) => {
-      const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename||'download'; document.body.appendChild(a); a.click();
-      setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
-    };
-
-    const delay = (ms) => new Promise(r => setTimeout(r, ms));
-    const maskKeyInUrl = (u) => u.replace(/(api_key=)[^&]+/ig, '$1****');
-
-    // ---------- Creds storage ----------
-    const LS_BASE_KEY = 'cb_api_base';
-    const LS_KEY_KEY  = 'cb_api_key';
-
-    function saveCredsToLocalStorage(){
-      try{
-        localStorage.setItem(LS_BASE_KEY, $("#baseUrl").value.trim());
-        localStorage.setItem(LS_KEY_KEY,  $("#apiKey").value.trim());
-        log('💾 Saved credentials to localStorage.');
-      }catch(e){ log('⚠️ Could not save to localStorage:', e.message); }
+  // Map requested format -> preferred Accept header
+  function acceptFor(format){
+    switch ((format||'').toLowerCase()){
+      case 'html': return 'text/html';
+      case 'pdf':  return 'application/pdf';
+      case 'zip':  return 'application/zip';
+      default:     return 'application/json';
     }
-    function loadCredsFromLocalStorage(){
-      try{
-        const base = localStorage.getItem(LS_BASE_KEY);
-        const key  = localStorage.getItem(LS_KEY_KEY);
-        if(base){ $("#baseUrl").value = base; apiBase = base; }
-        if(key){  $("#apiKey").value  = key;  apiKey  = key;  }
-        if(base || key) log('🔑 Loaded credentials from localStorage.');
-      }catch(e){ /* ignore */ }
-    }
-    function clearCredsFromLocalStorage(){
-      try{
-        localStorage.removeItem(LS_BASE_KEY);
-        localStorage.removeItem(LS_KEY_KEY);
-        log('🧹 Cleared saved credentials.');
-      }catch(e){ /* ignore */ }
+  }
+  function extFrom(formatOrCt){
+    const s = (formatOrCt||'').toLowerCase();
+    if (s.includes('pdf') || s==='pdf')   return 'pdf';
+    if (s.includes('html')|| s==='html')  return 'html';
+    if (s.includes('zip') || s==='zip')   return 'zip';
+    return 'json';
+  }
+
+  // UPDATED: runReportAndDownload — set Accepts correctly, keep poll flow
+  async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
+    // Kick off with JSON-friendly Accept (202 body is JSON)
+    let start;
+    try {
+      start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } });
+    } catch (e) {
+      start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } }, { tryQueryKeyFallback: true });
     }
 
-    // ---------- Defaults & state ----------
-    const DEFAULT_BASE = "https://conference-buddy-geoutils.replit.app/api";
-    const DEFAULT_KEY  = "5UtGAI40f0vUXWqSdr547POSAWJ6u2g6CdldegSg";
+    log('GET', maskKeyInUrl(start.url));
 
-    let apiBase = DEFAULT_BASE;
-    let apiKey  = DEFAULT_KEY;
-
-    $("#baseUrl").value = DEFAULT_BASE;
-    $("#apiKey").value  = DEFAULT_KEY;
-
-    $("#baseUrl").addEventListener('input', e => apiBase = e.target.value.trim() || DEFAULT_BASE);
-    $("#apiKey").addEventListener('input',  e => apiKey  = e.target.value.trim()  || DEFAULT_KEY);
-
-    // Save on Enter in API key field
-    $("#apiKey").addEventListener('keydown', (e) => {
-      if(e.key === 'Enter'){
-        e.preventDefault();
-        $("#btnSaveRefresh").click();
-      }
-    });
-
-    // ---------- Robust URL builders (fix for double /api) ----------
-    const API_URL = {
-      get origin() {
-        try { return new URL(apiBase).origin; } catch { return apiBase.replace(/\/api\/?$/,''); }
-      },
-      get hasApiSuffix() { return /\/api\/?$/i.test(apiBase); }
-    };
-
-    function buildUrl(pathOrUrl) {
-      if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-
-      // If the API hands back /api/... use site origin to avoid duplicating /api
-      if (pathOrUrl.startsWith('/api/')) {
-        return API_URL.origin + pathOrUrl;
-      }
-
-      // If it starts with / (but not /api/), resolve relative to current apiBase path
-      if (pathOrUrl.startsWith('/')) {
-        return (API_URL.hasApiSuffix ? apiBase : (API_URL.origin + '/api')) + pathOrUrl;
-      }
-
-      // Otherwise treat as relative to apiBase
-      const sep = apiBase.endsWith('/') ? '' : '/';
-      return apiBase + sep + pathOrUrl;
+    if (start.status === 200) {
+      // Could be JSON (direct) or rarely file
+      return downloadFromResponse(start, filenameBase, format);
     }
 
-    function withParam(pathOrUrl, key, value) {
-      const u = new URL(buildUrl(pathOrUrl));
-      if (value === undefined || value === null || value === '') {
-        u.searchParams.delete(key);
-      } else {
-        u.searchParams.set(key, value);
+    if (start.status === 202) {
+      const body = await start.res.json();
+      const taskId = body.task_id || body.id;
+      const statusPath = body.check_status_url || body.status_url || `/reports/status/${taskId}`;
+      log(`Task queued: ${taskId}. Polling status…`);
+
+      while (true) {
+        await delay(3000);
+        const status = await apiFetchSmart(statusPath, { headers:{ 'Accept':'application/json' } });
+        const js = await status.res.json();
+        log(`status=${js.status}`);
+        if (js.status === 'completed') break;
+        if (js.status === 'failed') throw new Error('Report generation failed.');
       }
-      return u.toString();
+
+      // Ask explicitly for the file we want
+      const dlUrl = withParam(startUrl, 'completed', 'true');
+      const dl = await apiFetchSmart(dlUrl, { headers:{ 'Accept': acceptFor(format) } });
+      log('GET', maskKeyInUrl(dl.url));
+      return downloadFromResponse(dl, filenameBase, format);
     }
 
-    // ---------- CORS-smart fetch ----------
-    function isLikelyCorsOrNetwork(err){
-      return /NetworkError|Failed to fetch|TypeError/i.test(String(err && err.message || err));
-    }
+    throw new Error(`Unexpected response: HTTP ${start.status}`);
+  }
 
-    async function rawFetch(fullUrl, opts={}){
-      const res = await fetch(fullUrl, { ...opts, mode: 'cors', redirect: 'follow' });
-      const contentType = res.headers.get('content-type') || '';
-      const dispo       = res.headers.get('content-disposition') || '';
-      const status      = res.status;
-      if(!res.ok){
-        let details = '';
-        try { details = await res.text(); } catch {}
-        throw new Error(`HTTP ${status} at ${fullUrl} – ${details || res.statusText}`);
-      }
-      return { res, contentType, dispo, status };
-    }
-
-    async function apiFetchSmart(pathOrUrl, opts={}, { tryQueryKeyFallback = true } = {}){
-      // Attempt 1: header auth
-      const full = buildUrl(pathOrUrl);
-      const headers = { 'X-API-Key': apiKey, ...(opts.headers||{}) };
-      try {
-        const r = await rawFetch(full, { ...opts, headers });
-        return { ...r, url: full, usedQueryKey:false };
-      } catch (err) {
-        if (!tryQueryKeyFallback || !isLikelyCorsOrNetwork(err)) throw err;
-        log('⚠️ Header-auth failed (likely CORS). Retrying with api_key in query…');
-      }
-
-      // Attempt 2: put key in query (no custom headers => no preflight)
-      const withKey = withParam(full, 'api_key', apiKey);
-      const r2 = await rawFetch(withKey, { ...opts, headers: {} });
-      return { ...r2, url: withKey, usedQueryKey:true };
-    }
-
-    // ---------- Polling workflow (202 -> /status -> completed=true) ----------
-    let lastStartUrl = ''; // keep the last start URL for "Regenerate Last"
-
-    async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
-      lastStartUrl = buildUrl(startUrl);
-      $("#btnRegenLast").disabled = false;
-      $("#lastStartUrl").textContent = `Last: ${maskKeyInUrl(lastStartUrl)}`;
-
-      let start;
-      try {
-        start = await apiFetchSmart(startUrl);
-      } catch (e) {
-        start = await apiFetchSmart(startUrl, {}, { tryQueryKeyFallback: true });
-      }
-
-      log('GET', maskKeyInUrl(start.url));
-
-      if (start.status === 200) {
-        return downloadFromResponse(start, filenameBase, format);
-      }
-
-      if (start.status === 202) {
-        const body = await start.res.json();
-        const taskId = body.task_id || body.id;
-        const statusPath =
-          body.check_status_url ||
-          body.status_url ||
-          `/reports/status/${taskId}`;
-
-        log(`Task queued: ${taskId}. Polling status…`);
-
-        // Poll until completed/failed
-        while (true) {
-          await delay(3000);
-          const status = await apiFetchSmart(statusPath);
-          const js = await status.res.json();
-          log(`status=${js.status}`);
-          if (js.status === 'completed') break;
-          if (js.status === 'failed') throw new Error('Report generation failed.');
-        }
-
-        // Re-GET with completed=true
-        const dlUrl = withParam(startUrl, 'completed', 'true');
-        const dl = await apiFetchSmart(dlUrl);
-        log('GET', maskKeyInUrl(dl.url));
-        return downloadFromResponse(dl, filenameBase, format);
-      }
-
-      throw new Error(`Unexpected response: HTTP ${start.status}`);
-    }
-
-    async function downloadFromResponse(resp, base, format){
-      const filename = pickFilename(resp.dispo, base, format, resp.contentType);
-      if ((resp.contentType||'').includes('application/json')) {
-        const json = await resp.res.json();
-        const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
-        fileDownload(blob, filename.endsWith('.json') ? filename : `${base}.json`);
+  // UPDATED: downloadFromResponse — follow download_url / s3_url if JSON
+  async function downloadFromResponse(resp, base, format){
+    const ct = resp.contentType || '';
+    if (ct.includes('application/json')){
+      const json = await resp.res.json();
+      // If API gives us a direct URL, use it (preferred)
+      const followUrl = json.download_url || json.result_url || json.url;
+      if (followUrl){
+        const f = await apiFetchSmart(followUrl, { headers:{ 'Accept': acceptFor(format) } }, { tryQueryKeyFallback:true });
+        log('GET', maskKeyInUrl(f.url));
+        const filename = pickFilename(f.dispo, json.filename || base, format, f.contentType);
+        const blob = await f.res.blob();
+        fileDownload(blob, ensureExt(filename, format, f.contentType));
         setStatus(`Report ready → downloaded ${filename}.`,'ok');
-      } else {
-        const blob = await resp.res.blob();
-        fileDownload(blob, filename);
-        setStatus(`Report ready → downloaded ${filename}.`,'ok');
+        return;
       }
+
+      // If only S3 is provided, fetch it directly
+      if (json.s3_url){
+        const s3 = await fetch(json.s3_url, { redirect:'follow' });
+        if(!s3.ok) throw new Error(`S3 download failed: ${s3.status} ${s3.statusText}`);
+        const s3Blob = await s3.blob();
+        const fname = ensureExt(json.filename || `${base}`, format, s3.type || '');
+        fileDownload(s3Blob, fname);
+        setStatus(`Report ready → downloaded ${fname}.`,'ok');
+        return;
+      }
+
+      // Otherwise, save the JSON as a diagnostic file
+      const fname = json.filename && extFrom(json.filename).includes('json')
+        ? json.filename
+        : `${base}.json`;
+      const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
+      fileDownload(blob, fname);
+      setStatus(`Report saved as JSON (no direct file URL present).`,'warn');
+      return;
     }
 
-    function pickFilename(dispo, base, format, ct){
-      const m = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(dispo||'');
-      if (m) return decodeURIComponent(m[1] || m[2]);
-      let ext = format;
-      if (ct) {
-        if (ct.includes('pdf')) ext='pdf';
-        else if (ct.includes('zip')) ext='zip';
-        else if (ct.includes('html')) ext='html';
-        else if (ct.includes('json')) ext='json';
-      }
-      return `${base}.${ext || 'dat'}`;
-    }
+    // Non-JSON: it's the actual file
+    const filename = pickFilename(resp.dispo, base, format, ct);
+    const blob = await resp.res.blob();
+    fileDownload(blob, ensureExt(filename, format, ct));
+    setStatus(`Report ready → downloaded ${filename}.`,'ok');
+  }
 
-    // ---------- Loaders ----------
-    async function loadConferences({preserveSelection=true}={}){
-      setStatus("Loading conferences…","warn");
-      try{
-        const prevConf = $("#conferenceSelect").value;
-        const {res, contentType, url} = await apiFetchSmart('/conferences');
-        log('GET', url);
-        const data = contentType.includes('json') ? await res.json() : null;
-        const items = (data && (data.data||data.items||[])) || [];
-        const sel = $("#conferenceSelect");
-        sel.innerHTML = items.map(c => `<option value="${c.id}">${c.name} (${c.status || ''})</option>`).join('');
-        if(preserveSelection && prevConf){
-          const opt = $(`#conferenceSelect option[value="${prevConf}"]`);
-          if(opt) opt.selected = true;
-        }
-        setStatus(`Loaded ${items.length} conferences.`,"ok");
-        const chosen = $("#conferenceSelect").value || (items[0] && items[0].id) || '';
-        if(chosen){ await loadVendors(chosen, {keepSelection:true}); }
-      }catch(e){
-        console.error(e); setStatus(`Failed to load conferences: ${e.message}`,"err"); log(e.message);
-      }
-    }
+  function ensureExt(name, format, ct){
+    const want = extFrom(format || ct);
+    if (new RegExp(`\\.${want}$`, 'i').test(name)) return name;
+    return `${name.replace(/\.(json|pdf|zip|html)$/i,'')}.${want}`;
+  }
+</script>
 
-    async function loadVendors(conferenceId, {keepSelection=false}={}){
-      const vendorSel = $("#vendorSelect");
-      const prev = new Set($$("#vendorSelect option:checked").map(o=>o.value));
-      vendorSel.innerHTML = `<option value="">— All vendors —</option>`;
-      $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
-      $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
-      if(!conferenceId) return;
-      setStatus("Loading vendors…","warn");
-      try{
-        const query = qs({ conference_id: conferenceId, limit: 100, offset: 0 });
-        const {res, contentType, url} = await apiFetchSmart(`/vendors?${query}`);
-        log('GET', url);
-        const data = contentType.includes('json') ? await res.json() : null;
-        const items = (data && (data.data||[])) || [];
-        vendorSel.innerHTML = `<option value="">— All vendors —</option>` +
-          items.map(v => `<option value="${v.id}">${v.name}${v.booth_number?` · Booth ${v.booth_number}`:''}</option>`).join('');
-        if(keepSelection){
-          $$("#vendorSelect option").forEach(opt => { if(prev.has(opt.value)) opt.selected = true; });
-          const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
-          if(selected.length === 1){ await loadSessionsFromVendor(selected[0]); }
-        }
-        setStatus(`Loaded ${items.length} vendors.`,"ok");
-      }catch(e){
-        console.error(e); setStatus(`Failed to load vendors: ${e.message}`,"err"); log(e.message);
-      }
-    }
-
-    async function loadSessionsFromVendor(vendorId){
-      $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
-      $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
-      if(!vendorId) return;
-      setStatus("Loading sessions from vendor history…","warn");
-      try{
-        const {res, contentType, url} = await apiFetchSmart(`/reports/vendor/${vendorId}?format=json`);
-        log('GET', url);
-        const payload = contentType.includes('json') ? await res.json() : null;
-        const history = (payload && payload.data && (payload.data.interaction_history || payload.data.sessions || [])) || [];
-        const options = history.map((h, idx) => {
-          const dt = h.date || h.timestamp || h.start_time;
-          const dtLabel = dt ? new Date(dt).toLocaleString() : `Session ${idx+1}`;
-          const label = `${dtLabel} – ${h.summary || h.type || 'session'}${h.duration_minutes?` (${h.duration_minutes}m)`:''}`;
-          const sid = h.session_id || h.id || `${vendorId}-${idx}`;
-          return `<option value="${sid}">${label}</option>`;
-        }).join('');
-        $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>` + options;
-        $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>` + options;
-        setStatus(`Loaded ${history.length} sessions from vendor history.`,"ok");
-      }catch(e){
-        console.error(e); setStatus(`Failed to load sessions: ${e.message}`,"err"); log(e.message);
-      }
-    }
-
-    // ---------- Report Generators ----------
-    async function generateConferenceReport(){
-      const confId = $("#conferenceSelect").value;
-      if(!confId){ setStatus("Select a conference first.","err"); return; }
-
-      const format = $("#formatConf").value;
-      const template = $("#templateConf").value || undefined;
-      const includeAttachments = $("#includeAttachments").checked ? true : undefined;
-      const background = $("#forceBgConf").checked ? true : undefined;
-
-      const params = { format, template, include_attachments: includeAttachments, background };
-      const url = `/reports/conference/${confId}?${qs(params)}`;
-      setStatus("Generating conference report…","warn");
-      try{
-        await runReportAndDownload({ startUrl: url, filenameBase: 'conference_report', format });
-      }catch(e){
-        console.error(e); setStatus(`Conference report failed: ${e.message}`,"err"); log(e.message);
-      }
-    }
-
-    async function generateEndOfDayReport(){
-      const confId = $("#conferenceSelect").value;
-      const day = $("#eodDate").value;
-      if(!confId){ setStatus("Select a conference first.","err"); return; }
-      if(!day){ setStatus("Pick a day for the End-of-Day report.","err"); return; }
-
-      const format = $("#eodFormat").value;
-      const background = $("#forceBgEod").checked ? true : undefined;
-
-      const url = `/reports/day/${confId}/${day}?${qs({ format, background })}`;
-      setStatus("Generating End-of-Day report…","warn");
-      try{
-        await runReportAndDownload({ startUrl: url, filenameBase: `eod_report_${day}`, format });
-      }catch(e){
-        console.error(e); setStatus(`End-of-Day report failed: ${e.message}`,"err"); log(e.message);
-      }
-    }
-
-    async function generateSessionReport(){
-      const sid = $("#sessionForReport").value || $("#sessionSelect").value;
-      if(!sid){ setStatus("Pick a session (select a vendor first to load sessions).","err"); return; }
-      const format = $("#sessionFormat").value;
-
-      setStatus("Generating session report…","warn");
-      try{
-        const url = `/reports/session/${sid}?${qs({ format })}`;
-        await runReportAndDownload({ startUrl: url, filenameBase: `session_${sid}`, format });
-      }catch(e){
-        console.error(e); setStatus(`Session report failed: ${e.message}`,"err"); log(e.message);
-      }
-    }
-
-    async function generateVendorsReport(){
-      const confId = $("#conferenceSelect").value;
-      if(!confId){ setStatus("Select a conference first.","err"); return; }
-
-      const chosen = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
-      const format = $("#vendorFormat").value;
-
-      setStatus("Generating vendor(s) report…","warn");
-
-      try{
-        // JSON bundle for all vendors if none selected
-        if(format === 'json' && chosen.length === 0){
-          const q = qs({ conference_id: confId, limit: 100, offset: 0 });
-          const {res, contentType, url} = await apiFetchSmart(`/vendors?${q}`);
-          log('GET', url);
-          const data = contentType.includes('json') ? await res.json() : null;
-          const vendorIds = ((data && data.data) || []).map(v => v.id);
-
-          const results = [];
-          for(const id of vendorIds){
-            const r = await apiFetchSmart(`/reports/vendor/${id}?format=json`);
-            log('GET', r.url);
-            const json = await r.res.json();
-            results.push(json);
-          }
-          const out = { generated_at: new Date().toISOString(), conference_id: confId, count: results.length, vendors: results };
-          const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
-          fileDownload(blob, `vendors_report_${confId}_bundle.json`);
-          setStatus(`Vendor(s) JSON bundle ready (${results.length}).`,"ok");
-          return;
-        }
-
-        // Otherwise, per-vendor download using new workflow
-        const ids = chosen.length ? chosen : [];
-        if(ids.length === 0 && format !== 'json'){
-          setStatus('Select at least one vendor for non-JSON formats.','err'); return;
-        }
-
-        for(const id of ids){
-          const startUrl = `/reports/vendor/${id}?${qs({ format })}`;
-          await runReportAndDownload({ startUrl, filenameBase: `vendor_${id}`, format });
-        }
-      }catch(e){
-        console.error(e); setStatus(`Vendor(s) report failed: ${e.message}`,"err"); log(e.message);
-      }
-    }
-
-    // ---------- Advanced Workflows ----------
-    $("#btnRegenLast").addEventListener('click', async () => {
-      if(!lastStartUrl){ setStatus('No previous report URL yet.','err'); return; }
-      setStatus('Regenerating last report…','warn');
-      try{
-        const path = new URL(lastStartUrl).pathname;
-        const base =
-          path.includes('/conference/') ? 'conference_report' :
-          path.includes('/day/')        ? 'eod_report' :
-          path.includes('/session/')    ? 'session_report' :
-          path.includes('/vendor/')     ? 'vendor_report' : 'report';
-        const fmtMatch = /[?&]format=([^&]+)/.exec(lastStartUrl);
-        const fmt = fmtMatch ? decodeURIComponent(fmtMatch[1]) : 'json';
-        await runReportAndDownload({ startUrl: lastStartUrl, filenameBase: base, format: fmt });
-      }catch(e){
-        console.error(e); setStatus(`Regenerate failed: ${e.message}`,'err'); log(e.message);
-      }
-    });
-
-    $("#btnCheckTask").addEventListener('click', async () => {
-      const id = $("#taskIdInput").value.trim();
-      if(!id){ setStatus('Enter a task_id first.','err'); return; }
-      setStatus('Checking task status…','warn');
-      try{
-        const r = await apiFetchSmart(`/reports/status/${encodeURIComponent(id)}`);
-        log('GET', r.url);
-        const js = await r.res.json();
-        log(JSON.stringify(js, null, 2));
-        setStatus(`Task ${id} → ${js.status}`,'ok');
-      }catch(e){
-        console.error(e); setStatus(`Check failed: ${e.message}`,'err'); log(e.message);
-      }
-    });
-
-    $("#btnDownloadTask").addEventListener('click', async () => {
-      const id = $("#taskIdInput").value.trim();
-      if(!id){ setStatus('Enter a task_id first.','err'); return; }
-      setStatus('Downloading by task…','warn');
-      try{
-        const r = await apiFetchSmart(`/reports/status/${encodeURIComponent(id)}`);
-        const js = await r.res.json();
-        log(JSON.stringify(js, null, 2));
-
-        const dlField = js.download_url || js.result_url || js.url;
-        if(dlField){
-          const dl = await apiFetchSmart(dlField);
-          await downloadFromResponse(dl, `report_${id}`, 'dat');
-          return;
-        }
-
-        setStatus('Status has no download URL; re-run using the original start button, then it will auto-download when completed.','warn');
-      }catch(e){
-        console.error(e); setStatus(`Download failed: ${e.message}`,'err'); log(e.message);
-      }
-    });
-
-    // ---------- Button wiring ----------
-    async function withButtonsDisabled(fn){
-      const btns = $$("button"); btns.forEach(b=>b.disabled=true);
-      try { return await fn(); }
-      finally { btns.forEach(b=>b.disabled=false); }
-    }
-
-    $("#btnConfReport").addEventListener('click', () => withButtonsDisabled(() => generateConferenceReport()));
-    $("#btnEodReport").addEventListener('click', () => withButtonsDisabled(() => generateEndOfDayReport()));
-    $("#btnSessionReport").addEventListener('click', () => withButtonsDisabled(() => generateSessionReport()));
-    $("#btnVendorsReport").addEventListener('click', () => withButtonsDisabled(() => generateVendorsReport()));
-
-    $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
-    $("#vendorSelect").addEventListener('change', e => {
-      const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
-      if(selected.length === 1){ loadSessionsFromVendor(selected[0]); }
-      else { $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`; $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`; }
-    });
-
-    // Save & Refresh
-    $("#btnSaveRefresh").addEventListener('click', async () => {
-      saveCredsToLocalStorage();
-      apiBase = $("#baseUrl").value.trim() || apiBase;
-      apiKey  = $("#apiKey").value.trim()  || apiKey;
-      await refreshAll();
-    });
-    $("#btnRefresh").addEventListener('click', async () => { await refreshAll(); });
-    $("#btnClearCreds").addEventListener('click', () => {
-      clearCredsFromLocalStorage();
-      setStatus('Saved credentials cleared (localStorage). Current inputs still active for this session.','warn');
-    });
-
-    async function refreshAll(){
-      const start = Date.now();
-      setStatus('Refreshing data…','warn');
-      const prevConf = $("#conferenceSelect").value;
-      const prevVendorIds = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
-      const prevSession = $("#sessionSelect").value;
-
-      await loadConferences({preserveSelection:true});
-      if(prevConf && $("#conferenceSelect").value === prevConf){
-        if(prevVendorIds.length){
-          $$("#vendorSelect option").forEach(opt => { if(prevVendorIds.includes(opt.value)) opt.selected = true; });
-          if(prevVendorIds.length === 1){
-            await loadSessionsFromVendor(prevVendorIds[0]);
-            const opt = $(`#sessionSelect option[value="${prevSession}"]`);
-            if(opt) opt.selected = true;
-          }
-        }
-      }
-      const ts = new Date().toLocaleString();
-      $("#lastRefreshed").textContent = `Last refreshed: ${ts}`;
-      setStatus(`Refreshed in ${(Date.now()-start)}ms`,'ok');
-    }
-
-    // ---------- Kickoff ----------
-    loadCredsFromLocalStorage();
-    apiBase = $("#baseUrl").value.trim() || apiBase;
-    apiKey  = $("#apiKey").value.trim()  || apiKey;
-    refreshAll();
-  </script>
 </body>
 </html>
