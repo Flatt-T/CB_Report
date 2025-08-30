@@ -257,7 +257,7 @@
           <div class="tiny" id="lastTaskIdText">Last task: —</div>
         </div>
       </div>
-      <div class="tiny">On completion, we download from the expiring <span class="kbd">s3_url</span> in the final poll JSON (fallback: <span class="kbd">url</span> → inline <span class="kbd">data</span>).</div>
+      <div class="tiny">On completion, we download from the presigned <span class="kbd">S3_URL</span>/<span class="kbd">s3_url</span> in the final poll JSON (fallback: <span class="kbd">url</span> → inline <span class="kbd">data</span>).</div>
     </section>
 
     <!-- Bottom Output -->
@@ -291,8 +291,8 @@
 
     let apiBase = DEFAULT_BASE;
     let apiKey  = DEFAULT_KEY;
-    let lastStartUrl = ''; // for "Regenerate Last"
-    let lastTaskId = '';   // capture the ai_report_* id
+    let lastStartUrl = '';
+    let lastTaskId = '';
 
     $("#baseUrl").value = DEFAULT_BASE;
     $("#apiKey").value  = DEFAULT_KEY;
@@ -436,7 +436,17 @@
       return { res, contentType, dispo, status, url };
     }
 
-    // ---------- Artifact helpers ----------
+    // ---------- Case-insensitive field access & artifact helpers ----------
+    function getFieldCI(obj, ...names){
+      if (!obj || typeof obj!=='object') return undefined;
+      const map = new Map(Object.keys(obj).map(k => [k.toLowerCase(), k]));
+      for (const n of names){
+        const key = map.get(String(n).toLowerCase());
+        if (key !== undefined) return obj[key];
+      }
+      return undefined;
+    }
+
     function looksLikeHtml(s){ return typeof s==='string' && /<!DOCTYPE html|<html/i.test(s); }
     function looksLikeBase64(s){
       if (typeof s!=='string') return false;
@@ -453,42 +463,51 @@
 
     function pickArtifactFromStatus(js, desiredFormat){
       const want = (desiredFormat||'').toLowerCase();
-      const byKeys = (obj) => {
+
+      const normalize = (obj) => {
         if (!obj || typeof obj!=='object') return null;
-        const url = obj.download_url || obj.result_url || obj.url || obj.href || null;
-        const s3  = obj.s3_url || null;
-        const fmt = (obj.format || obj.type || obj.format_type || obj.content_type || '').toLowerCase();
-        const fn  = obj.filename || obj.name || '';
-        const ct  = obj.content_type || '';
-        const data = obj.data || obj.data_base64 || null;
-        const isB64 = !!obj.data_base64 || (!!data && !looksLikeHtml(data));
-        return { url, s3_url:s3, format:fmt, filename:fn, content_type:ct, data, is_base64:isB64 };
+        const url = getFieldCI(obj,'s3_url','S3_URL','s3Url') || getFieldCI(obj,'download_url','result_url','url','href');
+        const s3  = getFieldCI(obj,'s3_url','S3_URL','s3Url'); // keep explicit
+        const fmt = String(getFieldCI(obj,'format','type','format_type','content_type')||'').toLowerCase();
+        const fn  = getFieldCI(obj,'filename','name') || '';
+        const ct  = getFieldCI(obj,'content_type') || '';
+        const data= getFieldCI(obj,'data','data_base64') || null;
+        const isB64 = !!getFieldCI(obj,'data_base64') || (!!data && !looksLikeHtml(data));
+        return { url, s3_url:s3 || null, format:fmt, filename:fn, content_type:ct, data, is_base64:isB64 };
       };
 
-      const deep = js?.result?.result ? byKeys(js.result.result) : null;
+      // deepest
+      const deep = normalize(getFieldCI(js,'result')?.result);
       if (deep && (deep.data || deep.url || deep.s3_url)) return deep;
 
-      const mid = js?.result ? byKeys(js.result) : null;
+      // middle
+      const mid = normalize(getFieldCI(js,'result'));
       if (mid && (mid.data || mid.url || mid.s3_url)) return mid;
 
-      if (Array.isArray(js?.files) && js.files.length){
-        const exact = js.files.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
-        return byKeys(exact || js.files[0]);
+      // arrays
+      const files = getFieldCI(js,'files');
+      if (Array.isArray(files) && files.length){
+        const exact = files.find(f => (String(getFieldCI(f,'format')||'').toLowerCase()===want) || (String(getFieldCI(f,'filename')||'').toLowerCase().endsWith('.'+want)));
+        return normalize(exact || files[0]);
       }
-      if (Array.isArray(js?.artifacts) && js.artifacts.length){
-        const exact = js.artifacts.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
-        return byKeys(exact || js.artifacts[0]);
+      const arts = getFieldCI(js,'artifacts');
+      if (Array.isArray(arts) && arts.length){
+        const exact = arts.find(f => (String(getFieldCI(f,'format')||'').toLowerCase()===want) || (String(getFieldCI(f,'filename')||'').toLowerCase().endsWith('.'+want)));
+        return normalize(exact || arts[0]);
       }
 
-      if (js?.results && typeof js.results==='object'){
-        const keys = Object.keys(js.results);
+      // object map
+      const results = getFieldCI(js,'results');
+      if (results && typeof results==='object'){
+        const keys = Object.keys(results);
         const keyExact = keys.find(k => k.toLowerCase()===want);
-        const any = byKeys(js.results[keyExact || keys[0]]);
-        if (any) return any;
+        return normalize(results[keyExact || keys[0]]);
       }
 
-      const single = byKeys(js.file || js);
+      // single
+      const single = normalize(getFieldCI(js,'file') || js);
       if (single && (single.data || single.url || single.s3_url)) return single;
+
       return null;
     }
 
@@ -505,8 +524,9 @@
         resp = await fetchDirect(link, { headers:{ 'Accept': accept } });
         log('GET', link);
       } else {
-        resp = await apiFetchSmart(link, { headers:{ 'Accept': accept } }, { tryQueryKeyFallback:true });
-        log('GET', maskKeyInUrl(resp.url));
+        const r = await apiFetchSmart(link, { headers:{ 'Accept': accept } }, { tryQueryKeyFallback:true });
+        log('GET', maskKeyInUrl(r.url));
+        resp = r;
       }
 
       const filename = pickFilename(resp.dispo, suggestedName || 'report', format, resp.contentType);
@@ -530,7 +550,7 @@
       return `${base}.${ext || 'dat'}`;
     }
 
-    // ---------- Polling & download (uses final poll JSON; S3 first) ----------
+    // ---------- Polling & download (uses final poll JSON; S3 first, CI keys) ----------
     async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
       lastStartUrl = startUrl;
       $("#btnRegenLast").disabled = false;
@@ -553,13 +573,13 @@
       }
 
       const body = await start.res.json();
-      const taskId = body.task_id || body.id;
+      const taskId = getFieldCI(body,'task_id','id');
       lastTaskId = taskId || lastTaskId;
       if (lastTaskId){
         $("#taskIdInput").value = lastTaskId;
         $("#lastTaskIdText").textContent = `Last task: ${lastTaskId}`;
       }
-      const statusPath = body.check_status_url || body.status_url || `/reports/status/${encodeURIComponent(taskId)}`;
+      const statusPath = getFieldCI(body,'check_status_url','status_url') || `/reports/status/${encodeURIComponent(taskId)}`;
       const statusUrl  = buildUrl(statusPath);
       log(`Task queued: ${taskId}. Polling status via ${statusUrl}…`);
 
@@ -569,13 +589,13 @@
         await delay(3000);
         const status = await apiFetchSmart(statusUrl, { headers:{ 'Accept':'application/json' } });
         const js = await status.res.json();
-        const st = (js.status || js.result?.status || '').toLowerCase();
+        const st = (getFieldCI(js,'status') || getFieldCI(getFieldCI(js,'result'),'status') || '').toLowerCase();
         log(`status=${st || 'unknown'}`);
         if (st === 'completed' || st === 'success' || st === 'done') { completedJson = js; break; }
         if (st === 'failed' || st === 'error') throw new Error('Report generation failed.');
       }
 
-      // Pick artifact from the completed poll; ALWAYS prefer s3_url
+      // Pick artifact from the completed poll; ALWAYS prefer S3 URL (any casing)
       const art = pickArtifactFromStatus(completedJson, format);
       if (art){
         const link = preferredLink(art);
@@ -596,7 +616,7 @@
       return downloadFromResponse(dl, filenameBase, format);
     }
 
-    // ---------- Envelope-aware download (still prefers S3 if present) ----------
+    // ---------- Envelope-aware download (still prefers S3 if present, CI keys) ----------
     async function downloadFromResponse(resp, base, format){
       const ct = resp.contentType || '';
       if (ct.includes('application/json')){
@@ -615,13 +635,13 @@
           }
         }
 
-        const followUrl = json.s3_url || json.download_url || json.result_url || json.url;
+        const followUrl = getFieldCI(json,'s3_url','S3_URL','s3Url') || getFieldCI(json,'download_url','result_url','url');
         if (followUrl){
-          await downloadArtifactLink(followUrl, json.filename || `${base}.${extFrom(format)}`, format);
+          await downloadArtifactLink(followUrl, getFieldCI(json,'filename') || `${base}.${extFrom(format)}`, format);
           return;
         }
 
-        const fname = json.filename && extFrom(json.filename).includes('json') ? json.filename : `${base}.json`;
+        const fname = getFieldCI(json,'filename') && extFrom(getFieldCI(json,'filename')).includes('json') ? getFieldCI(json,'filename') : `${base}.json`;
         const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
         fileDownload(blob, fname);
         setStatus(`Report saved as JSON (no file link/data present).`,'warn');
@@ -835,7 +855,7 @@
         log('GET', r.url);
         const js = await r.res.json();
         log(JSON.stringify(js, null, 2));
-        const st = (js.status || js.result?.status || '').toLowerCase();
+        const st = (getFieldCI(js,'status') || getFieldCI(getFieldCI(js,'result'),'status') || '').toLowerCase();
         setStatus(`Task ${id} → ${st || 'unknown'}`,'ok');
       }catch(e){
         console.error(e); setStatus(`Check failed: ${e.message}`,'err'); log(e.message);
@@ -851,7 +871,7 @@
         const js = await r.res.json();
         log(JSON.stringify(js, null, 2));
 
-        const preferFmt = js.result?.format_type || js.preferred_format || 'json';
+        const preferFmt = getFieldCI(getFieldCI(js,'result'),'format_type') || getFieldCI(js,'preferred_format') || 'json';
         const art = pickArtifactFromStatus(js, preferFmt) || pickArtifactFromStatus(js, null);
         if (art){
           const link = preferredLink(art);
