@@ -257,7 +257,7 @@
           <div class="tiny" id="lastTaskIdText">Last task: —</div>
         </div>
       </div>
-      <div class="tiny">On completion, we fetch artifacts from <span class="kbd">/api/reports/status/:task_id</span> and download the file (data for HTML/JSON; server/S3 for PDF/ZIP).</div>
+      <div class="tiny">On completion, we now always use the expiring <span class="kbd">s3_url</span> to download the file (with fallback to <span class="kbd">url</span> / inline <span class="kbd">data</span>).</div>
     </section>
 
     <!-- Bottom Output -->
@@ -331,7 +331,6 @@
     const delay = (ms) => new Promise(r => setTimeout(r, ms));
     const maskKeyInUrl = (u) => u.replace(/(api_key=)[^&]+/ig, '$1****');
 
-    // query serializer supporting arrays as k[]=v
     const qs = (obj) => {
       const parts = [];
       for (const [k,v] of Object.entries(obj||{})) {
@@ -342,7 +341,6 @@
       return parts.join('&');
     };
 
-    // Accept & extension helpers
     function acceptFor(format){
       switch ((format||'').toLowerCase()){
         case 'html': return 'text/html';
@@ -391,15 +389,12 @@
 
     function withParam(pathOrUrl, key, value) {
       const u = new URL(buildUrl(pathOrUrl));
-      if (value === undefined || value === null || value === '') {
-        u.searchParams.delete(key);
-      } else {
-        u.searchParams.set(key, value);
-      }
+      if (value === undefined || value === null || value === '') { u.searchParams.delete(key); }
+      else { u.searchParams.set(key, value); }
       return u.toString();
     }
 
-    // ---------- CORS-smart fetch (header first, then ?api_key fallback) ----------
+    // ---------- CORS-smart fetch ----------
     function isLikelyCorsOrNetwork(err){
       return /NetworkError|Failed to fetch|TypeError/i.test(String(err && err.message || err));
     }
@@ -418,7 +413,6 @@
     async function apiFetchSmart(pathOrUrl, opts={}, { tryQueryKeyFallback = true } = {}){
       const full = buildUrl(pathOrUrl);
       const headers = { 'X-API-Key': apiKey, ...(opts.headers||{}) };
-
       try {
         const r = await rawFetch(full, { ...opts, headers });
         return { ...r, url: full, usedQueryKey:false };
@@ -426,13 +420,10 @@
         if (!tryQueryKeyFallback || !isLikelyCorsOrNetwork(err)) throw err;
         log('⚠️ Header-auth failed (likely CORS). Retrying with api_key in query…');
       }
-
       const withKey = withParam(full, 'api_key', apiKey);
       const r2 = await rawFetch(withKey, { ...opts, headers: {} });
       return { ...r2, url: withKey, usedQueryKey:true };
     }
-
-    // Plain fetch for S3/third-party links (NO auth headers or query-key)
     async function fetchDirect(url, opts={}){
       const res = await fetch(url, { ...opts, mode:'cors', redirect:'follow' });
       const contentType = res.headers.get('content-type') || '';
@@ -445,11 +436,11 @@
       return { res, contentType, dispo, status, url };
     }
 
-    // ---------- Helpers: decode & artifact picking ----------
+    // ---------- Artifact helpers ----------
     function looksLikeHtml(s){ return typeof s==='string' && /<!DOCTYPE html|<html/i.test(s); }
     function looksLikeBase64(s){
       if (typeof s!=='string') return false;
-      if (/[<>{}]/.test(s)) return false; // reject obvious markup/json
+      if (/[<>{}]/.test(s)) return false;
       const cleaned = s.replace(/\s+/g,'');
       return cleaned.length % 4 === 0 && /^[A-Za-z0-9+/=]+$/.test(cleaned);
     }
@@ -460,13 +451,7 @@
       return bytes;
     }
 
-    // prefer links (server/S3) for non-HTML/JSON
-    function preferLinksForFormat(fmt){
-      const f = (fmt||'').toLowerCase();
-      return !(f==='html' || f==='json');
-    }
-
-    // Return a normalized "artifact" if present: { filename, content_type, data, is_base64, url, format }
+    // Return a normalized "artifact"
     function pickArtifactFromStatus(js, desiredFormat){
       const want = (desiredFormat||'').toLowerCase();
       const byKeys = (obj) => {
@@ -481,15 +466,12 @@
         return { url, s3_url:s3, format:fmt, filename:fn, content_type:ct, data, is_base64:isB64 };
       };
 
-      // Prefer nested "result.result"
       const deep = js?.result?.result ? byKeys(js.result.result) : null;
       if (deep && (deep.data || deep.url || deep.s3_url)) return deep;
 
-      // Next try js.result
       const mid = js?.result ? byKeys(js.result) : null;
       if (mid && (mid.data || mid.url || mid.s3_url)) return mid;
 
-      // Arrays: files / artifacts
       if (Array.isArray(js?.files) && js.files.length){
         const exact = js.files.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
         return byKeys(exact || js.files[0]);
@@ -499,7 +481,6 @@
         return byKeys(exact || js.artifacts[0]);
       }
 
-      // Dictionary: results
       if (js?.results && typeof js.results==='object'){
         const keys = Object.keys(js.results);
         const keyExact = keys.find(k => k.toLowerCase()===want);
@@ -507,22 +488,25 @@
         if (any) return any;
       }
 
-      // Single flattened
       const single = byKeys(js.file || js);
       if (single && (single.data || single.url || single.s3_url)) return single;
-
       return null;
+    }
+
+    // ALWAYS prefer S3 when present
+    function preferredLink(art){
+      return art?.s3_url || art?.url || null;
     }
 
     async function downloadArtifactLink(link, suggestedName, format){
       const accept = acceptFor(format);
       const linkUrl = new URL(link, window.location.href);
       const apiOrigin = new URL(apiBase, window.location.href).origin;
-      const isForeign = linkUrl.origin !== apiOrigin;
+      const isS3orForeign = linkUrl.origin !== apiOrigin;
 
       let resp;
-      if (isForeign){
-        // Presigned S3 (no auth headers)
+      if (isS3orForeign){
+        // S3 or third-party: no auth headers
         resp = await fetchDirect(link, { headers:{ 'Accept': accept } });
         log('GET', link);
       } else {
@@ -537,42 +521,50 @@
     }
 
     async function downloadArtifactData(art, filenameFallback, format){
+      // Only used when no s3_url/url exists (HTML/JSON fine inline)
       const filename = ensureExt(art.filename || filenameFallback, format, art.content_type || '');
-      const targetFmt = (format || '').toLowerCase();
-
-      // Only use inline data by default for HTML/JSON; for others we prefer links
-      if (preferLinksForFormat(targetFmt)){
-        // Fallback only if no link exists
-        if (!(art.url || art.s3_url)) {
-          const ct = art.content_type || (targetFmt==='pdf' ? 'application/pdf' : (targetFmt==='zip' ? 'application/zip' : 'application/octet-stream'));
-          const blob = art.is_base64 ? new Blob([base64ToBytes(art.data)], { type: ct }) : new Blob([art.data], { type: ct });
-          fileDownload(blob, filename);
-          setStatus(`Report ready → downloaded ${filename}.`,'ok');
-        }
-        return;
-      }
-
-      // HTML/JSON path: use inline data directly
-      const ct = art.content_type || (targetFmt==='html' ? 'text/html' : 'application/json');
+      const ct = art.content_type || (format==='html' ? 'text/html' : 'application/json');
       const blob = art.is_base64 ? new Blob([base64ToBytes(art.data)], { type: ct }) : new Blob([art.data], { type: ct });
       fileDownload(blob, filename);
       setStatus(`Report ready → downloaded ${filename}.`,'ok');
     }
 
-    // ---------- Artifact-first polling workflow ----------
+    // ---------- Final status fetch with retries ----------
+    function isLikelyCorsOrNetwork(err){
+      return /NetworkError|Failed to fetch|TypeError/i.test(String(err && err.message || err));
+    }
+    async function fetchFinalStatusJson(statusUrl){
+      let lastErr;
+      for (let attempt=1; attempt<=3; attempt++){
+        try{
+          const urlTry = attempt===1 ? statusUrl : withParam(statusUrl, 'cache_bust', Date.now());
+          const r = await apiFetchSmart(urlTry, { headers:{ 'Accept':'application/json' } });
+          log('GET', maskKeyInUrl(r.url));
+          const js = await r.res.json();
+          return js;
+        }catch(e){
+          lastErr = e;
+          if (!isLikelyCorsOrNetwork(e)) throw e;
+          log(`⚠️ Status fetch attempt ${attempt} failed: ${e.message}`);
+          await delay(500 * attempt);
+        }
+      }
+      throw lastErr || new Error('Failed to fetch final status');
+    }
+
+    // ---------- Polling & download ----------
     async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
       lastStartUrl = startUrl;
       $("#btnRegenLast").disabled = false;
       $("#lastStartUrl").textContent = `Last: ${maskKeyInUrl(buildUrl(startUrl))}`;
 
-      // Kickoff with JSON Accept (202 is JSON)
+      // Kickoff
       let start;
       try {
         start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } });
       } catch (e) {
         start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } }, { tryQueryKeyFallback: true });
       }
-
       log('GET', maskKeyInUrl(start.url));
 
       if (start.status === 200) {
@@ -587,46 +579,49 @@
           $("#taskIdInput").value = lastTaskId;
           $("#lastTaskIdText").textContent = `Last task: ${lastTaskId}`;
         }
-        const statusPath = body.check_status_url || body.status_url || `/reports/status/${taskId}`;
-        log(`Task queued: ${taskId}. Polling status…`);
+        const statusPath = body.check_status_url || body.status_url || `/reports/status/${encodeURIComponent(taskId)}`;
+        const statusUrl  = buildUrl(statusPath);
+        log(`Task queued: ${taskId}. Polling status via ${statusUrl}…`);
 
-        // poll until completed
+        // Poll
         while (true) {
           await delay(3000);
-          const status = await apiFetchSmart(statusPath, { headers:{ 'Accept':'application/json' } });
+          const status = await apiFetchSmart(statusUrl, { headers:{ 'Accept':'application/json' } });
           const js = await status.res.json();
-          log(`status=${js.status || js.result?.status || 'unknown'}`);
           const st = (js.status || js.result?.status || '').toLowerCase();
+          log(`status=${st || 'unknown'}`);
           if (st === 'completed' || st === 'success' || st === 'done') break;
           if (st === 'failed' || st === 'error') throw new Error('Report generation failed.');
         }
 
-        // fetch final status JSON by task id and pick artifact
-        const finalStatus = await apiFetchSmart(`/reports/status/${encodeURIComponent(taskId)}`, { headers:{ 'Accept':'application/json' } });
-        log('GET', maskKeyInUrl(finalStatus.url));
-        const statusJson  = await finalStatus.res.json();
-        const art = pickArtifactFromStatus(statusJson, format);
+        // Final status JSON (same URL)
+        let statusJson;
+        try {
+          statusJson = await fetchFinalStatusJson(statusUrl);
+        } catch (e) {
+          // Fallback: completed=true on starter URL
+          log(`⚠️ Final status fetch failed (${e.message}). Trying completed=true fallback…`);
+          const dlUrl = withParam(startUrl, 'completed', 'true');
+          const dl = await apiFetchSmart(dlUrl, { headers:{ 'Accept': acceptFor(format) } });
+          log('GET', maskKeyInUrl(dl.url));
+          return downloadFromResponse(dl, filenameBase, format);
+        }
 
+        // Pick artifact and download — ALWAYS prefer s3_url
+        const art = pickArtifactFromStatus(statusJson, format);
         if (art){
-          // Prefer server/S3 for non-HTML/JSON formats
-          if (preferLinksForFormat(format) && (art.url || art.s3_url)){
-            const link = art.url || art.s3_url;
+          const link = preferredLink(art);
+          if (link){
             await downloadArtifactLink(link, art.filename || `${filenameBase}.${extFrom(format)}`, format);
             return;
           }
-          // HTML/JSON: inline data if present
           if (art.data){
             await downloadArtifactData(art, `${filenameBase}.${extFrom(format)}`, format);
             return;
           }
-          // Otherwise try link (works for all formats if provided)
-          if (art.url || art.s3_url){
-            await downloadArtifactLink(art.url || art.s3_url, art.filename || `${filenameBase}.${extFrom(format)}`, format);
-            return;
-          }
         }
 
-        // Fallback: completed=true endpoint (may still be envelope)
+        // Last resort
         const dlUrl = withParam(startUrl, 'completed', 'true');
         const dl = await apiFetchSmart(dlUrl, { headers:{ 'Accept': acceptFor(format) } });
         log('GET', maskKeyInUrl(dl.url));
@@ -642,33 +637,22 @@
       if (ct.includes('application/json')){
         const json = await resp.res.json();
 
-        // Try nested artifact first
         const art = pickArtifactFromStatus(json, format);
         if (art){
-          if (preferLinksForFormat(format) && (art.url || art.s3_url)){
-            await downloadArtifactLink(art.url || art.s3_url, art.filename || `${base}.${extFrom(format)}`, format);
+          const link = preferredLink(art); // S3 first
+          if (link){
+            await downloadArtifactLink(link, art.filename || `${base}.${extFrom(format)}`, format);
             return;
           }
-          if (!preferLinksForFormat(format) && art.data){
+          if (art.data){
             await downloadArtifactData(art, `${base}.${extFrom(format)}`, format);
             return;
           }
-          if (art.url || art.s3_url){
-            await downloadArtifactLink(art.url || art.s3_url, art.filename || `${base}.${extFrom(format)}`, format);
-            return;
-          }
         }
 
-        // Basic top-level URL fields
-        const followUrl = json.download_url || json.result_url || json.url;
+        const followUrl = json.s3_url || json.download_url || json.result_url || json.url; // S3 first
         if (followUrl){
           await downloadArtifactLink(followUrl, json.filename || `${base}.${extFrom(format)}`, format);
-          return;
-        }
-
-        // S3 fallback
-        if (json.s3_url){
-          await downloadArtifactLink(json.s3_url, json.filename || `${base}.${extFrom(format)}`, format);
           return;
         }
 
@@ -678,7 +662,7 @@
           : `${base}.json`;
         const blob = new Blob([JSON.stringify(json,null,2)], {type:'application/json'});
         fileDownload(blob, fname);
-        setStatus(`Report saved as JSON (no direct file URL or data present).`,'warn');
+        setStatus(`Report saved as JSON (no file link/data present).`,'warn');
         return;
       }
 
@@ -833,7 +817,6 @@
       setStatus("Generating vendor(s) report…","warn");
 
       try{
-        // JSON bundle for all vendors when none selected
         if(format === 'json' && chosen.length === 0){
           const q = qs({ conference_id: confId, limit: 100, offset: 0 });
           const {res, contentType, url} = await apiFetchSmart(`/vendors?${q}`, { headers:{ 'Accept':'application/json' } });
@@ -855,7 +838,6 @@
           return;
         }
 
-        // Non-JSON formats require explicit vendor selection
         const ids = chosen.length ? chosen : [];
         if(ids.length === 0 && format !== 'json'){
           setStatus('Select at least one vendor for non-JSON formats.','err'); return;
@@ -917,9 +899,9 @@
         const preferFmt = js.result?.format_type || js.preferred_format || 'json';
         const art = pickArtifactFromStatus(js, preferFmt) || pickArtifactFromStatus(js, null);
         if (art){
-          if (preferLinksForFormat(preferFmt) && (art.url || art.s3_url)){ await downloadArtifactLink(art.url || art.s3_url, art.filename || `report_${id}`, preferFmt); return; }
-          if (!preferLinksForFormat(preferFmt) && art.data){ await downloadArtifactData(art, art.filename || `report_${id}`, preferFmt); return; }
-          if (art.url || art.s3_url){ await downloadArtifactLink(art.url || art.s3_url, art.filename || `report_${id}`, preferFmt); return; }
+          const link = preferredLink(art); // S3 first
+          if (link){ await downloadArtifactLink(link, art.filename || `report_${id}`, preferFmt); return; }
+          if (art.data){ await downloadArtifactData(art, art.filename || `report_${id}`, preferFmt); return; }
         }
         setStatus('No downloadable artifact in status; try re-running from the start button.','warn');
       }catch(e){
@@ -940,10 +922,13 @@
     $("#btnVendorsReport").addEventListener('click', () => withButtonsDisabled(() => generateVendorsReport()));
 
     $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
-    $("#vendorSelect").addEventListener('change', e => {
-      const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
-      if(selected.length === 1){ loadSessionsFromVendor(selected[0]); }
-      else { $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`; $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`; }
+    $("#vendorSelect").addEventListener('change', async (e) => {
+      const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+      if(selected.length === 1){ await loadSessionsFromVendor(selected[0]); }
+      else {
+        $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`;
+        $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`;
+      }
     });
 
     // Save & Refresh controls
