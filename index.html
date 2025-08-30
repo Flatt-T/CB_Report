@@ -263,7 +263,7 @@
           </div>
         </div>
       </div>
-      <div class="tiny">Tip: If status doesn’t expose a direct download URL, re-call the original start URL with <span class="kbd">completed=true</span>.</div>
+      <div class="tiny">Tip: We now fetch artifacts from <span class="kbd">/reports/status/:task_id</span> after completion.</div>
     </section>
 
     <!-- Bottom Output -->
@@ -384,16 +384,12 @@
 
     function buildUrl(pathOrUrl) {
       if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-
-      // Explicit /api/... from KB → resolve from origin
       if (pathOrUrl.startsWith('/api/')) {
         return API_URL.origin + pathOrUrl;
       }
-      // Rooted but not /api/... → resolve under configured apiBase (keeps trailing /api)
       if (pathOrUrl.startsWith('/')) {
         return (API_URL.hasApiSuffix ? apiBase : (API_URL.origin + '/api')) + pathOrUrl;
       }
-      // Relative → append to apiBase
       const sep = apiBase.endsWith('/') ? '' : '/';
       return apiBase + sep + pathOrUrl;
     }
@@ -441,13 +437,85 @@
       return { ...r2, url: withKey, usedQueryKey:true };
     }
 
-    // ---------- Polling workflow (202 -> /status -> completed=true) ----------
+    // Plain fetch for S3/third-party links (NO auth headers or query-key)
+    async function fetchDirect(url, opts={}){
+      return rawFetch(url, { ...opts, headers: { ...(opts.headers||{}) } });
+    }
+
+    // ---------- Artifact extraction from status JSON ----------
+    function pickArtifactFromStatus(js, desiredFormat){
+      const want = (desiredFormat||'').toLowerCase();
+      const byKeys = (obj) => {
+        if (!obj || typeof obj!=='object') return null;
+        // Common fields: download_url, url, s3_url, filename, content_type, format
+        const url = obj.download_url || obj.result_url || obj.url || obj.href || obj.link || null;
+        const s3  = obj.s3_url || null;
+        const fmt = (obj.format || obj.type || obj.content_type || '').toLowerCase();
+        const fn  = obj.filename || obj.name || '';
+        const ct  = obj.content_type || '';
+        return { url, s3_url:s3, format:fmt, filename:fn, content_type:ct };
+      };
+
+      // 1) files: [ {format, filename, download_url/...}, ... ]
+      if (Array.isArray(js?.files) && js.files.length){
+        // best match by format/ext
+        const exact = js.files.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
+        const any   = exact || js.files[0];
+        return byKeys(any);
+      }
+      // 2) artifacts / results dictionaries
+      if (Array.isArray(js?.artifacts) && js.artifacts.length){
+        const exact = js.artifacts.find(f => (f.format||'').toLowerCase()===want || (f.filename||'').toLowerCase().endsWith('.'+want));
+        const any   = exact || js.artifacts[0];
+        return byKeys(any);
+      }
+      if (js?.results && typeof js.results==='object'){
+        const keys = Object.keys(js.results);
+        const keyExact = keys.find(k => k.toLowerCase()===want);
+        const keyAny   = keyExact || keys[0];
+        const val = js.results[keyAny];
+        if (val) return byKeys(val);
+      }
+      // 3) single file fields
+      if (js?.file || js?.download_url || js?.result_url || js?.url || js?.s3_url){
+        return byKeys(js.file || js);
+      }
+      return null;
+    }
+
+    async function downloadArtifactLink(link, suggestedName, format){
+      const accept = acceptFor(format);
+      const isForeign = (() => {
+        try {
+          const l = new URL(link, window.location.href);
+          const bases = [new URL(apiBase, window.location.href).origin, window.location.origin];
+          return !bases.includes(l.origin);
+        } catch { return false; }
+      })();
+
+      let resp;
+      if (isForeign){
+        // Likely pre-signed S3 — do NOT attach auth headers or api_key
+        resp = await fetchDirect(link, { headers:{ 'Accept': accept } });
+        log('GET', link);
+      } else {
+        resp = await apiFetchSmart(link, { headers:{ 'Accept': accept } }, { tryQueryKeyFallback:true });
+        log('GET', maskKeyInUrl(resp.url));
+      }
+
+      const filename = pickFilename(resp.dispo, suggestedName || 'report', format, resp.contentType);
+      const blob = await resp.res.blob();
+      fileDownload(blob, ensureExt(filename, format, resp.contentType));
+      setStatus(`Report ready → downloaded ${filename}.`,'ok');
+    }
+
+    // ---------- Polling workflow (202 -> /status -> download via task artifacts) ----------
     async function runReportAndDownload({ startUrl, filenameBase, format='json' }){
       lastStartUrl = startUrl;
       $("#btnRegenLast").disabled = false;
       $("#lastStartUrl").textContent = `Last: ${maskKeyInUrl(buildUrl(startUrl))}`;
 
-      // Kick off with JSON Accept, since 202 payload is JSON
+      // Kick off with JSON Accept (202 payload is JSON)
       let start;
       try {
         start = await apiFetchSmart(startUrl, { headers: { 'Accept':'application/json' } });
@@ -476,7 +544,19 @@
           if (js.status === 'failed') throw new Error('Report generation failed.');
         }
 
-        // Request completed file with explicit Accept for the chosen format
+        // === NEW: fetch artifacts from the status endpoint and download the desired one ===
+        const finalStatus = await apiFetchSmart(statusPath, { headers:{ 'Accept':'application/json' } });
+        const statusJson  = await finalStatus.res.json();
+        const art = pickArtifactFromStatus(statusJson, format);
+
+        if (art && (art.url || art.s3_url)){
+          const link = art.url || art.s3_url;
+          const suggested = art.filename || `${filenameBase}.${extFrom(format)}`;
+          await downloadArtifactLink(link, suggested, format);
+          return;
+        }
+
+        // Fallback: try the completed=true endpoint (may still return a JSON envelope)
         const dlUrl = withParam(startUrl, 'completed', 'true');
         const dl = await apiFetchSmart(dlUrl, { headers:{ 'Accept': acceptFor(format) } });
         log('GET', maskKeyInUrl(dl.url));
@@ -494,23 +574,13 @@
         // Prefer API-provided download URLs
         const followUrl = json.download_url || json.result_url || json.url;
         if (followUrl){
-          const f = await apiFetchSmart(followUrl, { headers:{ 'Accept': acceptFor(format) } }, { tryQueryKeyFallback:true });
-          log('GET', maskKeyInUrl(f.url));
-          const filename = pickFilename(f.dispo, json.filename || base, format, f.contentType);
-          const blob = await f.res.blob();
-          fileDownload(blob, ensureExt(filename, format, f.contentType));
-          setStatus(`Report ready → downloaded ${filename}.`,'ok');
+          await downloadArtifactLink(followUrl, json.filename || base, format);
           return;
         }
 
         // S3 fallback if present
         if (json.s3_url){
-          const s3 = await fetch(json.s3_url, { redirect:'follow' });
-          if(!s3.ok) throw new Error(`S3 download failed: ${s3.status} ${s3.statusText}`);
-          const s3Blob = await s3.blob();
-          const fname = ensureExt(json.filename || `${base}`, format, s3.type || '');
-          fileDownload(s3Blob, fname);
-          setStatus(`Report ready → downloaded ${fname}.`,'ok');
+          await downloadArtifactLink(json.s3_url, json.filename || base, format);
           return;
         }
 
@@ -755,13 +825,13 @@
         const js = await r.res.json();
         log(JSON.stringify(js, null, 2));
 
-        const dlField = js.download_url || js.result_url || js.url;
-        if(dlField){
-          const f = await apiFetchSmart(dlField);
-          await downloadFromResponse(f, `report_${id}`, 'dat');
+        const art = pickArtifactFromStatus(js, js.preferred_format || 'json') || pickArtifactFromStatus(js, null);
+        if (art && (art.url || art.s3_url)){
+          const link = art.url || art.s3_url;
+          await downloadArtifactLink(link, art.filename || `report_${id}`, art.format || 'json');
           return;
         }
-        setStatus('Status has no download URL; re-run via the original start button, which will auto-download on completion.','warn');
+        setStatus('No downloadable artifact in status; try rerunning the report from its start button.','warn');
       }catch(e){
         console.error(e); setStatus(`Download failed: ${e.message}`,'err'); log(e.message);
       }
@@ -781,7 +851,7 @@
 
     $("#conferenceSelect").addEventListener('change', e => loadVendors(e.target.value));
     $("#vendorSelect").addEventListener('change', e => {
-      const selected = Array.from(e.target.selectedOptions).map(o => o.value).filter(Boolean);
+      const selected = Array.from($("#vendorSelect").selectedOptions).map(o => o.value).filter(Boolean);
       if(selected.length === 1){ loadSessionsFromVendor(selected[0]); }
       else { $("#sessionSelect").innerHTML = `<option value="">— All sessions —</option>`; $("#sessionForReport").innerHTML = `<option value="">— choose from Sessions dropdown above —</option>`; }
     });
